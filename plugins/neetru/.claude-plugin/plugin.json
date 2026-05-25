@@ -1,0 +1,19 @@
+{
+  "name": "neetru",
+  "version": "1.0.0",
+  "description": "Skills do ecossistema Neetru para Claude Code — CLI control plane (@neetru/cli@2.8.0) e SDK runtime (@neetru/sdk@2.1.0). Cobre scaffold, deploy, bancos por produto, namespaces do SDK e libs de suporte.",
+  "author": {
+    "name": "Neetru",
+    "email": "neetrucode@gmail.com"
+  },
+  "homepage": "https://github.com/Neetru/neetru-libs",
+  "repository": "https://github.com/Neetru/neetru-libs",
+  "license": "UNLICENSED",
+  "keywords": [
+    "neetru",
+    "cli",
+    "sdk",
+    "saas",
+    "neetru-core"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Neetru",
+  "description": "Marketplace oficial Neetru — skills, comandos e configurações pro Claude Code de devs/operadores Neetru",
+  "version": "0.1.0",
+  "homepage": "https://github.com/Neetru/neetru-libs/tree/main/claude-skills",
+  "plugins": [
+    {
+      "name": "neetru",
+      "path": "plugins/neetru",
+      "description": "Skill principal pro ecossistema Neetru: CLI @neetru/cli, SDK @neetru/sdk e libs (db-classifier, sql-guard, pii-mask, glossario)"
+    }
+  ]
+}
