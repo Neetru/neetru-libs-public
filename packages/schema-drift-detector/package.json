@@ -1,0 +1,31 @@
+{
+  "name": "@neetru/schema-drift-detector",
+  "version": "0.0.0",
+  "description": "Detector de deriva de schema do Neetru Core DB. Compara o schema vivo de um banco de produto com o schema esperado pelo ORM e aponta colunas adicionadas, removidas e alteradas. Pega mudancas silenciosas de break-glass. Funcao pura, deterministica, zero dependencias, fail-safe.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@neetru/realtime-protocol",
+  "version": "0.1.0",
+  "description": "Contrato de wire do gateway neetru-realtime — tipos de frame (SubscribeFrame, DeltaFrame, DbQuery, DbChange), union de ops e constantes de protocolo. Zero dependencias de runtime. Importado por @neetru/realtime-transport, @neetru/realtime-changestream E pelo NeetruRealtimeClient do SDK, garantindo que gateway e cliente nunca derivem silenciosamente.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

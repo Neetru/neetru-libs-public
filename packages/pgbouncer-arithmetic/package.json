@@ -1,0 +1,30 @@
+{
+  "name": "@neetru/coredb-pgbouncer-arithmetic",
+  "version": "0.0.0",
+  "description": "Dimensionamento aritmetico do pool do PgBouncer derivado do max_connections do Postgres e da contagem viva de bancos. Garante que a VM Postgres densa nunca estoure o teto de conexoes sob autoscaling. Funcao pura, zero dependencias.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "neetru-glossario",
+  "version": "0.1.4",
+  "description": "Vocabulário plain PT-BR do ecossistema Neetru como código — fonte única de verdade da terminologia, importada pelo CLI e pelo Core, base do lint anti-jargão. Funções puras, zero dependências.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

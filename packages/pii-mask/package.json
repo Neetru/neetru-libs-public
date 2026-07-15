@@ -1,0 +1,29 @@
+{
+  "name": "@neetru/pii-mask",
+  "version": "0.1.0",
+  "description": "Mascaramento de PII fail-closed do Neetru Core DB. Mascara dados pessoais num result set, no servidor, antes de a UI staff do visualizador de banco em produção vê-los. Salvaguarda LGPD. Função pura, zero dependências, fail-closed.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
