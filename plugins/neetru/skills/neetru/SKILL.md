@@ -87,7 +87,7 @@ Detalhes em `cli/src/commands/<nome>.ts` do repo `Neetru/neetru-cli` e em `docs/
 | **Auth operador** | `login [--token]`, `logout`, `whoami`; `auth status/setup/pull` (creds de Claude/Codex/Gemini) |
 | **Config CLI** | `config set/get/path` |
 | **Criar produto** | `new <slug>` (macro: registry + workspace + scaffold + browser), `init <name>` (só scaffold), `add <auth\|billing\|usage\|support\|users>` (templates) |
-| **Build / Deploy / Promote** | `build [--stack node\|docker\|php-apache\|static] [--no-cache]`, `deploy [--target cloud-run\|vm] [--server <id>] [--domain <d>] [--artifact-url …] [--local-artifact]`, `promote --from <env> --to <env>` |
+| **Build / Deploy / Promote** | `build [--stack node\|docker\|php-apache\|static] [--target-env dev\|workspace\|prod] [--no-cache]`, `deploy [--target cloud-run\|vm] [--server <id>] [--domain <d>] [--artifact-url …] [--local-artifact]`, `promote --from <env> --to <env>` |
 | **Catálogo público** | `publish [--draft] [--unpublish]` (Firestore `public_products/`) |
 | **Clientes (tenants)** | `tenants list/get/create/update/suspend/reactivate` |
 | **Workspaces** | `workspaces create/list/get/advance/open` — `create` devolve `oauthClientSecret` **uma vez só** |
@@ -123,6 +123,7 @@ Detalhes em `cli/src/commands/<nome>.ts` do repo `Neetru/neetru-cli` e em `docs/
 - **Prefixo canônico**: `https://api.neetru.com/cli/v1/*`. Legado `/api/oauth/*` **depreciado 2026-05-15, some 2026-07-01** → migrar pra `/api/v1/oauth/*`.
 - **`neetru db` vs `neetru products db`**: `neetru db` é developer-facing (schema, migrations, pipeline local). `neetru products db` é staff/plano de controle (fleet-wide, registro Core). Não confundir.
 - **`db apply` sem `--dry-run` em migração destrutiva**: o pipeline pausa e pede `db migrations confirm <id> --mfa-token=…`. Não tem como pular — `@neetru/db-classifier` detecta DROP/ALTER COLUMN/TRUNCATE/etc automaticamente.
+- **`.env.local` vs `.env.production` no build**: o Next.js carrega `.env.local` (disco do dev) ANTES de `.env.production`, e não sobrescreve valores já definidos — um `.env.local` esquecido com `NEETRU_ENV=dev` fazia builds de PRODUÇÃO compilarem com o SDK em modo mock (login real desativado silenciosamente, incidente pdv-agiliza 2026-07-22). `neetru build` (>= 2.26.2) já força `NEXT_PUBLIC_NEETRU_ENV=<targetEnv>` (default `prod`) via spawn-env pra stacks `node`/`static` — automático, sem ação do dev. Envolver `next.config.mjs` com `withNeetruBuildGuard` (`@neetru/sdk/build-guard`, >= 3.1.15) faz o `neetru build` conferir pós-build e recusar empacotar se divergir.
 
 ---
 
@@ -146,7 +147,7 @@ const client = createNeetruClient({
   // db?: { engine: 'rest' | 'firestore' | 'nosql-vm', dbId: '...' }
 });
 
-console.log(VERSION); // '2.1.0'
+console.log(VERSION); // versão instalada — NÃO hardcode um valor aqui, sempre leia em runtime
 ```
 
 ## Variáveis de ambiente
@@ -170,7 +171,7 @@ console.log(VERSION); // '2.1.0'
 | `client.catalog` | `list(opts?)` → `{ products }` / `get(slug)` → `Product` | Produtos públicos do `public_products/`. |
 | `client.entitlements` | `check(productSlug, feature)` → `boolean` / `checkDetailed(...)` → `EntitlementCheck` | NÃO é `check(feature)` sozinho — exige productSlug. |
 | `client.telemetry` | `event(name, props?)` / `log(level, msg, ctx?)` | Por produto. Eventos analíticos (≠ usage cobrado). |
-| `client.usage` | `track(event, properties?)` / `getQuota(metric)` / `report(metric, qty?)` / `check(metric)` | Metering canônico. `track` é evento; `report`/`check` é meter + quota. |
+| `client.usage` | `report(metric, qty?)` / `check(metric)` | Metering canônico. **`track`/`getQuota` foram REMOVIDOS na v3.0** — não existem mais, use `report`/`check`. |
 | `client.support` | `createTicket({subject, message, severity?})` / `listMyTickets({productSlug?})` | **NÃO é `create`** — é `createTicket`/`listMyTickets`. |
 | `client.db` | ver seção abaixo | Namespace reestruturado em v2.0 — breaking change intencional. |
 | `client.checkout` | `start({productId, planId, callbackUrl, tenantType?, tenantId?, autoRedirect?})` → `CheckoutStartResult` / `getIntent(intentId)` | POSTa em `/api/v1/checkout/intents`. Browser default redireciona automático. |
@@ -214,7 +215,7 @@ HTTP interno já tem retry exponencial com jitter ±20% em `rate_limited`/`serve
 
 ## Subpaths (exports map real do npm)
 ```ts
-import { createNeetruClient } from '@neetru/sdk';        // root
+import { createNeetruClient } from '@neetru/sdk';        // root — universal (browser/Node/Edge)
 import { signIn } from '@neetru/sdk/auth';
 import { CheckoutLink, EntitlementGate,
          useEntitlementContext } from '@neetru/sdk/react';
@@ -223,9 +224,24 @@ import { MockAuth, MockUsage, MockSupport,
          DEV_FIXTURE_USER } from '@neetru/sdk/mocks';
 // db com React:
 import { useCollection, useDoc } from '@neetru/sdk/db/react';
+// Guard de build (Node-only, next.config.mjs — ver "Build — env do bundle" abaixo):
+import { withNeetruBuildGuard } from '@neetru/sdk/build-guard';
 ```
 
-14 subpaths reais: `.` `/auth /catalog /entitlements /telemetry /usage /support /mocks /db /db/react /errors /checkout /react /webhooks /notifications`.
+18 subpaths reais: `.` `/auth /catalog /entitlements /telemetry /usage /support /mocks /db /db/react /errors /checkout /react /webhooks /notifications /firestore-compat /ai /build-guard`. `/build-guard` é o único Node-only (importa `node:fs`/`node:path`) — fora do barrel `.` de propósito.
+
+## Build — env do bundle (`NEXT_PUBLIC_NEETRU_ENV`)
+
+O Next.js carrega `.env.local` (disco do dev) ANTES de `.env.production` e não sobrescreve valores já definidos — um `.env.local` esquecido com `NEETRU_ENV=dev` fazia builds de PRODUÇÃO compilarem com o SDK em modo `MockAuth` (login real desativado silenciosamente — incidente pdv-agiliza, 2026-07-22, `@neetru/cli@2.26.2` + `@neetru/sdk@3.1.15`).
+
+`neetru build` (stacks `node`/`static`) já força `NEXT_PUBLIC_NEETRU_ENV=<targetEnv>` (default `prod`) via spawn-env — automático, sem ação do dev. Recomendado também envolver `next.config.mjs`:
+
+```js
+import { withNeetruBuildGuard } from '@neetru/sdk/build-guard';
+export default withNeetruBuildGuard({ /* ...seu nextConfig */ });
+```
+
+Isso grava `.next/neetru-build-manifest.json` com o env realmente compilado — `neetru build` confere pós-build e **recusa empacotar o tarball** se divergir do esperado, em vez de deployar um bundle silenciosamente quebrado.
 
 **Subpaths que NÃO existem** (cuidado em templates/AI): `/middleware` e `/server`. Desconsidere se aparecer — use os reais acima.
 
