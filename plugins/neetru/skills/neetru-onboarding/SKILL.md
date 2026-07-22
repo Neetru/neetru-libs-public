@@ -42,6 +42,7 @@ Não escreva código antes do `doctor` verde. (**Node 22 LTS** é pré-requisito
 - DB `degraded`/503 logo após deploy = **cold-start falso** → `neetru-troubleshooting`.
 - Self-update do agente cosmético (versão mente) → `neetru-release-gates`.
 - Nome de VM **não é identidade** (colisão de nome levou um cron a deletar a VM de prod) → `neetru-troubleshooting`.
+- `.env.local` esquecido vence `.env.production` no build → login real desativado silenciosamente em prod (`neetru build >= 2.26.2` já protege; envolva `next.config.mjs` com `withNeetruBuildGuard`) → `neetru-deploy` Armadilha #3.
 
 ## 6. Ticket: quando NÃO abrir, e o que anexar
 Não abra se o erro já está documentado ou se o `doctor` aponta o fix. Ao abrir: `neetru doctor --json` + deployment id + command-result + timestamp+TZ + `NeetruError.code`. **Nunca** segredo no chat.

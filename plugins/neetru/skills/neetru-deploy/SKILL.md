@@ -25,6 +25,14 @@ Em `--target vm`, o Core **rejeita/derruba** chaves cujo nome casa `*SECRET*` / 
 - **Cloud Run:** `neetru hosting create-mapping --service --domain --mfa-token` (destrutivo top-tier, CNAME→`ghs.googlehosted.com`). **Em VM isso dá 403** (`run.domainmappings.create`) — não é teu erro, é o caminho errado pro target.
 - Regra: target VM → `--domain` inline; target cloud-run → `hosting create-mapping`.
 
+## 🔴 Armadilha #3 — build de prod compilado com env=dev (`.env.local` venceu `.env.production`)
+
+O Next.js carrega `.env.local` (disco do dev) ANTES de `.env.production` e não sobrescreve valores já definidos — um `.env.local` esquecido com `NEETRU_ENV=dev` fazia o passo 1 (`neetru build`) compilar o bundle de PRODUÇÃO com `NEXT_PUBLIC_NEETRU_ENV=dev`, ativando `MockAuth` no SDK — login real desativado silenciosamente, sem erro nenhum no deploy (incidente pdv-agiliza, 2026-07-22).
+
+- `neetru build` (>= 2.26.2, stacks `node`/`static`) já força `NEXT_PUBLIC_NEETRU_ENV=<targetEnv>` (default `prod`) via spawn-env — automático, sem ação do dev. Use `--target-env dev|workspace|prod` só se quiser um valor diferente do default de propósito.
+- Se `next.config.mjs` envolver `withNeetruBuildGuard` (`@neetru/sdk/build-guard`, >= 3.1.15), o passo 1 já **recusa empacotar o tarball** se o env compilado divergir — o sintoma vira erro claro no build, não "login misteriosamente não funciona" descoberto depois do deploy.
+- Sintoma se AINDA acontecer (produto sem o guard, ou build feito fora do `neetru build`): botão de login não abre popup nem redireciona — `MockAuth.signIn()` só finge login em memória, nunca navega pro IdP real. Ver `neetru-sdk-troubleshooting`.
+
 ## Exit codes do deploy → ação
 `1` validação (cheque flags) · `2` 401 (token: `neetru login`) · `3` 403 (permissão/escopo) · `4` 5xx/rede (Core/artefato — pode ser transitório, ver artefato abaixo) · `5` 501 (target/stack não suportado).
 

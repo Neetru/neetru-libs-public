@@ -23,6 +23,7 @@ Decida ANTES de mexer no código. Foi o gap que causou o retrabalho no ME1: o `s
 | Sintoma | Veredito | Vai pra |
 |---|---|---|
 | `missing_api_key`/`unauthorized` só em prod | `--env-file` dropou `*SECRET*`/OIDC | `neetru-deploy` |
+| Login não faz nada (sem popup/redirect) só em prod, sem erro no deploy | `.env.local` venceu `.env.production` — bundle compilou `NEXT_PUBLIC_NEETRU_ENV=dev`, MockAuth ativo (incidente pdv-agiliza 2026-07-22) | `neetru-sdk-troubleshooting` / `neetru-deploy` Armadilha #3 |
 | `--domain` 403 em VM | usou caminho Cloud Run em VM | `neetru-deploy` |
 | migração `type already exists` | hash redundante (ME1) — motor do Core | `neetru-migrations` (DDL idempotente; não reescrever schema) |
 | backup nunca `completed` | gated por release do agente | `neetru-release-gates` |
