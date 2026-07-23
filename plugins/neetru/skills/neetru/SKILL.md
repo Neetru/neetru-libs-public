@@ -7,8 +7,10 @@ description: Operar `@neetru/cli` (control plane do Neetru Core via terminal —
 
 Dois pacotes publicados no npm, cada um em repo próprio:
 
-- **`@neetru/cli@2.8.0`** — bin `neetru`. Control plane do Core via terminal. ~55 comandos. Repo: `Neetru/neetru-cli`.
-- **`@neetru/sdk@2.1.0`** — runtime que produtos SaaS Neetru consomem. `createNeetruClient(...)` + 13 namespaces + subpaths. Universal (browser, Node ≥18, Edge), ESM-first, tree-shakable, sem side effects. Repo: `Neetru/neetru-sdk`.
+- **`@neetru/cli`** — bin `neetru`. Control plane do Core via terminal. ~55 comandos. Repo: `Neetru/neetru-cli`.
+- **`@neetru/sdk`** — runtime que produtos SaaS Neetru consomem. `createNeetruClient(...)` + 13 namespaces + subpaths. Universal (browser, Node ≥18, Edge), ESM-first, tree-shakable, sem side effects. Repo: `Neetru/neetru-sdk`.
+
+> **Versões (última verificação 2026-07-23):** CLI `2.26.2` · SDK `3.1.15` · agente Linux `1.6.51` · Core CalVer `2026.07.x`. **Não hardcode** em código — confirme em runtime: `npm view @neetru/cli version`, `npm view @neetru/sdk version`, `neetru servers list` (agente por VM), `/api/health` (`.sha`/`.revision` do Core). Números em texto envelhecem; o header aqui é só "por onde andava".
 
 Libs de apoio publicadas em `Neetru/neetru-libs` (todas `0.1.0`):
 - **`@neetru/db-classifier`** — avalia se uma migration SQL é aditiva ou destrutiva. Função pura, parser AST, isomórfica Node.
@@ -106,7 +108,7 @@ Detalhes em `cli/src/commands/<nome>.ts` do repo `Neetru/neetru-cli` e em `docs/
 | **Audit + Billing + Logs** | `audit tail -n 200 --action billing --severity warning --json`, `billing summary --year=2026 --month=5`, `logs --follow --product=<slug> --channel=<stdout\|stderr\|app>` |
 | **Caixa de suporte staff** | `support tickets list/describe/reply/assign/status` |
 | **DR** | `dr exports list`, `dr restore --gcs-path=… --target-project=…` (staging-only) |
-| **Agente Linux** | `agent release --version=<semver> --binary=arch=path`, `agent yank <v>`, `agent canary start/rollback` — versão atual do agente: **v1.5.0** |
+| **Agente Linux** | `agent release --version=<semver> --binary=arch=path`, `agent yank <v>`, `agent canary start/rollback` — versão do agente por VM via `neetru servers list` (não hardcode; ver header) |
 | **Status global** | `status` (saúde das 5 superfícies públicas) |
 | **Cloud Build** | `builds list` |
 | **Browser/painel** | `open [produto] [--client-id <id>]` |
@@ -398,11 +400,11 @@ Tabela de tradução canônica (amostra):
 
 # Padrões do ecossistema (relevantes pro CLI/SDK)
 
-- **CalVer**: respostas do Core carimbam `X-Neetru-Version: 2026.05.0+<revision>` + `X-Neetru-Sha`. SDK loga aviso se versão lida divergir muito do pacote.
+- **CalVer**: respostas do Core carimbam `X-Neetru-Version: 2026.07.x+<revision>` + `X-Neetru-Sha` (formato ilustrativo — leia o valor real em runtime). SDK loga aviso se versão lida divergir muito do pacote.
 - **Stripe = conta única, BRL apenas** (decisão CEO). Sem Connect, sem multi-moeda. Namespace `checkout` assume isso.
 - **Vocabulário plain PT-BR** na UI staff — API mantém termos técnicos (`tenant`/`workspace`/`entitlement`) por contrato. Não traduzir no SDK client.
 - **MFA TOTP step-up** obrigatório nos destrutivos do CLI (lista acima). Sempre `--dry-run` antes do real.
-- **Agente Linux v1.5.0** — repo `Neetru/neetru-agent-service-vm`. Contrato Core↔agente via message bus Firestore. Binários em `gs://neetru-agent-releases/v1.5.0/`.
+- **Agente Linux** — repo `Neetru/neetru-agent-service-vm`. Contrato Core↔agente via message bus Firestore. Binários em `gs://neetru-agent-releases/v<versao>/` (versão corrente por VM via `neetru servers list`; ver header). Self-update pode ser cosmético — confira `binaryHash`, não só o número (`neetru-release-gates`).
 
 ## Quando o trigger é ambíguo
 
