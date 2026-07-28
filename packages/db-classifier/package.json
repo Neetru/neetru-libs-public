@@ -1,6 +1,6 @@
 {
   "name": "@neetru/db-classifier",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Avaliador de severidade de migração SQL (aditiva/destrutiva) — fonte única de verdade do Neetru Core DB. Função pura, isomórfica Node, parser AST.",
   "license": "UNLICENSED",
   "type": "module",

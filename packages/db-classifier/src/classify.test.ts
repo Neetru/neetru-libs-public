@@ -131,6 +131,187 @@ describe('classifyMigration — aditiva', () => {
     expect(r.requiresConfirmation).toBe(false);
   });
 
+  // bug_pdv_createtype_guard_2026-07-28: Postgres não tem `CREATE TYPE IF NOT
+  // EXISTS` — o idioma canônico de idempotência é o guard `DO $$ ... EXCEPTION
+  // WHEN duplicate_object THEN null; END $$;`, que o node-sql-parser não
+  // consegue parsear (PL/pgSQL). Sem o fallback dedicado, isso caía em
+  // UNKNOWN → destrutiva, forçando confirm --mfa-token numa migração 100%
+  // aditiva (só cria um enum que talvez já exista).
+  it('CREATE TYPE dentro do guard idempotente DO $$ ... duplicate_object é aditiva', () => {
+    const r = classifyMigration(
+      `DO $$ BEGIN
+        CREATE TYPE "public"."ft_entity_type" AS ENUM('supplier', 'customer', 'other');
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;`,
+    );
+    expect(r.statements[0]?.severity).toBe('aditiva');
+    expect(r.overallSeverity).toBe('aditiva');
+    expect(r.requiresConfirmation).toBe(false);
+  });
+
+  it('guard idempotente sem schema-qualifier ("nome" em vez de "schema"."nome") também é aditivo', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN CREATE TYPE "status" AS ENUM('a', 'b'); EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('aditiva');
+  });
+
+  // Achado testando end-to-end contra o drizzle-kit real (não só unitário):
+  // `splitSqlStatements` atribui o comentário `--> statement-breakpoint` do
+  // statement ANTERIOR como PREFIXO deste — todo DO $$ guard exceto o
+  // primeiro do arquivo chegava aqui com esse comentário colado na frente e
+  // quebrava a âncora `^DO...`. Migração real do pdv-agiliza (16 enums) tinha
+  // 15 dos 16 guards indo pro fail-closed por causa disso.
+  it('múltiplos guards separados por --> statement-breakpoint (saída real do drizzle-kit) são TODOS aditivos', () => {
+    const r = classifyMigration(
+      `DO $$ BEGIN
+        CREATE TYPE "public"."ft_entity_type" AS ENUM('supplier', 'customer', 'other');
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;--> statement-breakpoint
+DO $$ BEGIN
+        CREATE TYPE "public"."ft_status" AS ENUM('pending', 'paid', 'overdue');
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;--> statement-breakpoint
+CREATE TABLE "x" (id int);`,
+    );
+    expect(r.statements).toHaveLength(3);
+    expect(r.statements.every((s) => s.severity === 'aditiva')).toBe(true);
+    expect(r.overallSeverity).toBe('aditiva');
+    expect(r.requiresConfirmation).toBe(false);
+  });
+
+  // Mesma lacuna existia no fallback IRMÃO (bug_59ee92b8, CREATE TABLE com
+  // enum customizado) — nunca testado com 2+ statements antes.
+  it('CREATE TABLE com enum customizado precedido de --> statement-breakpoint continua aditivo', () => {
+    const r = classifyMigration(
+      `CREATE TABLE "a" (id int);--> statement-breakpoint
+CREATE TABLE "sales" ("id" serial PRIMARY KEY, "status" "public"."sale_status" DEFAULT 'pending');`,
+    );
+    expect(r.statements).toHaveLength(2);
+    expect(r.statements.every((s) => s.severity === 'aditiva')).toBe(true);
+    expect(r.overallSeverity).toBe('aditiva');
+  });
+
+  // SEGURANÇA: o reconhecimento é ANCORADO no idioma exato — qualquer desvio
+  // (outro exception handler, um segundo statement escondido no BEGIN, corpo
+  // que não é CREATE TYPE) tem que continuar fail-closed. Um DO $$ genérico
+  // pode rodar QUALQUER código PL/pgSQL — não dá pra assumir "aditivo" sem essa
+  // âncora estrita.
+  it('DO $$ com EXCEPTION WHEN OTHERS (não duplicate_object) continua destrutivo (fail-closed)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN CREATE TYPE "x" AS ENUM('a'); EXCEPTION WHEN OTHERS THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  it('DO $$ com um segundo statement escondido dentro do BEGIN continua destrutivo (fail-closed)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN CREATE TYPE "x" AS ENUM('a'); DELETE FROM "y"; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  it('DO $$ genérico (sem CREATE TYPE nenhum) continua destrutivo (fail-closed)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN UPDATE "y" SET "col" = 1; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  // Achado por Codex review adversarial: os 3 payloads acima (WHEN OTHERS,
+  // 2º statement escondido, DO$$ genérico) só foram testados com o guard
+  // "puro" — precisam continuar fail-closed mesmo com o `--> statement-
+  // breakpoint` na frente (o shape REAL que sai do drizzle-kit, e o que
+  // stripEdgeComments precisa continuar rejeitando corretamente).
+  it('payloads adversariais continuam destrutivos MESMO com --> statement-breakpoint na frente', () => {
+    const payloads = [
+      `DO $$ BEGIN CREATE TYPE "x" AS ENUM('a'); EXCEPTION WHEN OTHERS THEN null; END $$;`,
+      `DO $$ BEGIN CREATE TYPE "x" AS ENUM('a'); DELETE FROM "y"; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+      `DO $$ BEGIN UPDATE "y" SET "col" = 1; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    ];
+    for (const payload of payloads) {
+      const c = classifyOneStatement(`--> statement-breakpoint\n${payload}`);
+      expect(c.severity, payload).toBe('destrutiva');
+    }
+  });
+
+  // Confirma que a âncora usa `$$` LITERAL (sem tag), não backreference — um
+  // guard com tag (`$tag$ ... $tag$`, sintaxe válida de dollar-quote do
+  // Postgres) não é reconhecido pelo fallback e cai fail-closed. Não é uma
+  // lacuna de segurança (é so mais restritivo que o necessário), mas trava o
+  // design atual explicitamente em teste.
+  it('guard com dollar-quote TAGUEADO ($tag$...$tag$) não é reconhecido (fail-closed, mais restritivo)', () => {
+    const c = classifyOneStatement(
+      `DO $tag$ BEGIN CREATE TYPE "x" AS ENUM('a'); EXCEPTION WHEN duplicate_object THEN null; END $tag$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  // Irmão do guard de CREATE TYPE — mesmo problema em ADD CONSTRAINT
+  // (Postgres não tem `ADD CONSTRAINT IF NOT EXISTS`), achado verificando o
+  // fix de CREATE TYPE com Docker real (2ª aplicação quebrava em
+  // "constraint already exists" logo depois de tabelas/tipos ficarem ok).
+  it('ADD CONSTRAINT (FK) dentro do guard idempotente é aditiva', () => {
+    const r = classifyMigration(
+      `DO $$ BEGIN
+        ALTER TABLE "cash_registers" ADD CONSTRAINT "fk1" FOREIGN KEY ("market_id") REFERENCES "public"."markets"("id") ON DELETE restrict ON UPDATE no action;
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;`,
+    );
+    expect(r.statements[0]?.severity).toBe('aditiva');
+    expect(r.overallSeverity).toBe('aditiva');
+    expect(r.requiresConfirmation).toBe(false);
+  });
+
+  it.each(['CHECK ("age" > 0)', 'UNIQUE ("email")', 'PRIMARY KEY ("id")'])(
+    'ADD CONSTRAINT %s dentro do guard também é aditiva',
+    (clause) => {
+      const c = classifyOneStatement(
+        `DO $$ BEGIN ALTER TABLE "x" ADD CONSTRAINT "c1" ${clause}; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+      );
+      expect(c.severity).toBe('aditiva');
+    },
+  );
+
+  it('múltiplos guards de ADD CONSTRAINT separados por --> statement-breakpoint são todos aditivos', () => {
+    const r = classifyMigration(
+      `DO $$ BEGIN
+        ALTER TABLE "a" ADD CONSTRAINT "fk_a" FOREIGN KEY ("b_id") REFERENCES "b"("id");
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;--> statement-breakpoint
+DO $$ BEGIN
+        ALTER TABLE "b" ADD CONSTRAINT "uq_b" UNIQUE ("name");
+      EXCEPTION WHEN duplicate_object THEN null;
+      END $$;`,
+    );
+    expect(r.statements).toHaveLength(2);
+    expect(r.statements.every((s) => s.severity === 'aditiva')).toBe(true);
+    expect(r.overallSeverity).toBe('aditiva');
+  });
+
+  // SEGURANÇA: mesmas defesas do irmão CREATE TYPE — handler errado ou
+  // segundo statement escondido tem que continuar fail-closed.
+  it('ADD CONSTRAINT com EXCEPTION WHEN OTHERS continua destrutivo (fail-closed)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN ALTER TABLE "x" ADD CONSTRAINT "c1" UNIQUE ("email"); EXCEPTION WHEN OTHERS THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  it('ADD CONSTRAINT com um segundo statement escondido continua destrutivo (fail-closed)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN ALTER TABLE "x" ADD CONSTRAINT "c1" UNIQUE ("email"); DELETE FROM "y"; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
+  it('DROP/ALTER de constraint dentro do guard NÃO é reconhecido (só ADD é aditivo)', () => {
+    const c = classifyOneStatement(
+      `DO $$ BEGIN ALTER TABLE "x" DROP CONSTRAINT "c1"; EXCEPTION WHEN duplicate_object THEN null; END $$;`,
+    );
+    expect(c.severity).toBe('destrutiva');
+  });
+
   // GUARD do fallback: um chunk com 2+ statements (CREATE seguido de DROP) NÃO
   // pode ser classificado aditivo pelo atalho de palavra-chave — fail-closed.
   it('fallback NÃO classifica aditivo um chunk composto (CREATE ...; DROP ...)', () => {
