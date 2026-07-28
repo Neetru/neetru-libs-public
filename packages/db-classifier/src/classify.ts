@@ -387,6 +387,25 @@ function detectUnparseableRename(rawSql: string): RuleHit | null {
 }
 
 /**
+ * Remove comentarios de linha (`-- ...`) e de bloco (`/* ... *\/`) das BORDAS
+ * (inicio e fim) de um statement ja separado por `splitSqlStatements` — nao
+ * do meio (o meio e parte do corpo real do statement).
+ *
+ * Necessario (bug_pdv_createtype_guard_2026-07-28) porque o splitter atribui
+ * um comentario entre dois statements como PREFIXO do statement SEGUINTE —
+ * nao sufixo do anterior (o `;` que fecha o statement anterior ja reseta o
+ * acumulador ANTES do comentario ser lido). O `node-sql-parser` tolera
+ * comentario de borda nativamente (pula token de comentario na gramatica);
+ * os fallbacks REGEX abaixo usam ancora `^...$` estrita e por isso precisam
+ * do mesmo tratamento manualmente, senao qualquer statement que nao seja o
+ * PRIMEIRO do arquivo cai no fail-closed generico so por causa do comentario.
+ */
+function stripEdgeComments(sql: string): string {
+  const EDGE = '(?:\\s|--[^\\n]*(?:\\n|$)|/\\*[\\s\\S]*?\\*/)*';
+  return sql.replace(new RegExp(`^${EDGE}`), '').replace(new RegExp(`${EDGE}$`), '');
+}
+
+/**
  * Deteccao leve, baseada em palavra-chave, de um CREATE de objeto nomeado novo
  * (TABLE/TYPE/SCHEMA/SEQUENCE/DOMAIN) que o parser NAO consegue parsear.
  *
@@ -439,6 +458,85 @@ function detectUnparseableAdditiveCreate(rawSql: string): RuleHit | null {
   return {
     rule,
     reason: `Cria ${kw === 'table' ? 'a' : 'um'} ${labelByKw[kw]} (CREATE ${kw.toUpperCase()}) — aditivo, nenhum dado existente e afetado. (parser nao reconheceu a sintaxe completa, ex.: coluna com tipo definido pelo usuario; classificado por palavra-chave.)`,
+  };
+}
+
+/**
+ * Reconhece o guard idempotente CANONICO de `CREATE TYPE` (bug_pdv_createtype_
+ * guard_2026-07-28): Postgres nao tem `CREATE TYPE IF NOT EXISTS`, entao o
+ * idioma padrao pra idempotencia e:
+ *
+ *   DO $$ BEGIN
+ *     CREATE TYPE "schema"."nome" AS ENUM(...);
+ *   EXCEPTION WHEN duplicate_object THEN null;
+ *   END $$;
+ *
+ * `node-sql-parser` nao suporta blocos PL/pgSQL `DO $$...$$` — SEMPRE cai no
+ * catch (confirmado empiricamente). Sem este fallback, esse guard (que e
+ * estritamente MAIS seguro que um `CREATE TYPE` puro, nao menos) virava
+ * UNKNOWN -> destrutiva, forcando confirmacao MFA numa migracao 100% aditiva.
+ *
+ * SEGURANCA: a regex e ANCORADA (`^...$` no texto normalizado) e exige TODAS
+ * as pecas do idioma exato:
+ *   1. abre com `DO $$ BEGIN` (dollar-quote sem tag, sempre `$$`),
+ *   2. corpo e EXATAMENTE um `CREATE TYPE ... AS ENUM(...);` — nada mais
+ *      (nao aceita um segundo statement escondido dentro do BEGIN/EXCEPTION),
+ *   3. o handler e EXATAMENTE `EXCEPTION WHEN duplicate_object THEN null;`
+ *      (nao aceita `WHEN OTHERS` nem outro corpo de handler — isso mascararia
+ *      erros nao relacionados a "tipo ja existe"),
+ *   4. fecha com `END $$;`.
+ * Qualquer desvio (outro DO block, outro exception handler, mais de um
+ * statement dentro) NAO casa e cai no fail-closed generico (UNKNOWN ->
+ * destrutiva) — igual a qualquer outro `DO $$` nao reconhecido.
+ */
+function detectIdempotentCreateTypeGuard(rawSql: string): RuleHit | null {
+  const normalized = rawSql.replace(/\s+/g, ' ').trim();
+  const re =
+    /^DO\s*\$\$\s*BEGIN\s*(CREATE\s+TYPE\s+(?:"[^"]+"\.)?"[^"]+"\s+AS\s+ENUM\([^;]*\);)\s*EXCEPTION\s+WHEN\s+duplicate_object\s+THEN\s+null;\s*END\s*\$\$;?$/i;
+  const m = re.exec(normalized);
+  if (!m) return null;
+  return {
+    rule: 'CREATE_TYPE',
+    reason:
+      'Cria um tipo (CREATE TYPE) dentro de um guard idempotente ' +
+      '(DO $$ ... EXCEPTION WHEN duplicate_object THEN null; END $$;) — ' +
+      'aditivo, nenhum dado existente e afetado; o guard so evita erro se o ' +
+      'tipo ja existir (nao mascara nenhum outro tipo de falha).',
+  };
+}
+
+/**
+ * Irmao de `detectIdempotentCreateTypeGuard` pro MESMO problema em
+ * `ALTER TABLE ... ADD CONSTRAINT` (bug_pdv_createtype_guard_2026-07-28,
+ * achado verificando o fix de CREATE TYPE com Docker real): Postgres NAO tem
+ * `ADD CONSTRAINT IF NOT EXISTS` (ao contrario de TABLE/INDEX/COLUMN, que
+ * tem) — o mesmo guard idiomatico `DO $$ ... EXCEPTION WHEN duplicate_object`
+ * resolve, e e o MESMO SQLSTATE (`duplicate_object`) que Postgres levanta
+ * pra "constraint already exists".
+ *
+ * SEGURANCA: a ancora exige `ADD CONSTRAINT "nome" (FOREIGN KEY|CHECK|
+ * UNIQUE|PRIMARY KEY)` — os MESMOS 4 tipos que `classifyAst` (linha ~163,
+ * `act === 'add' && resource === 'constraint'`) ja classifica como aditiva
+ * INCONDICIONALMENTE quando o statement bare e parseavel. Isto so estende o
+ * MESMO veredito pro caso embrulhado — nao amplia o que conta como aditivo.
+ * Handler tem que ser EXATAMENTE `WHEN duplicate_object THEN null` (mesma
+ * razao do CREATE_TYPE: `WHEN OTHERS` ou outro corpo mascararia erro
+ * nao-relacionado); corpo tem que ser EXATAMENTE um `ADD CONSTRAINT` — nada
+ * mais escondido dentro do BEGIN/EXCEPTION.
+ */
+function detectIdempotentAddConstraintGuard(rawSql: string): RuleHit | null {
+  const normalized = rawSql.replace(/\s+/g, ' ').trim();
+  const re =
+    /^DO\s*\$\$\s*BEGIN\s*(ALTER\s+TABLE\s+(?:"[^"]+"\.)?"[^"]+"\s+ADD\s+CONSTRAINT\s+"[^"]+"\s+(?:FOREIGN\s+KEY|CHECK|UNIQUE|PRIMARY\s+KEY)[^;]*;)\s*EXCEPTION\s+WHEN\s+duplicate_object\s+THEN\s+null;\s*END\s*\$\$;?$/i;
+  const m = re.exec(normalized);
+  if (!m) return null;
+  return {
+    rule: 'ADD_CONSTRAINT',
+    reason:
+      'Adiciona uma constraint (FK/CHECK/UNIQUE/PK) dentro de um guard ' +
+      'idempotente (DO $$ ... EXCEPTION WHEN duplicate_object THEN null; ' +
+      'END $$;) — aditiva, nenhum dado existente e afetado; o guard so evita ' +
+      'erro se a constraint ja existir (nao mascara nenhum outro tipo de falha).',
   };
 }
 
@@ -568,14 +666,55 @@ export function classifyOneStatement(rawSql: string): StatementClassification {
         suggestion: SUGGESTIONS[renameHit.rule] ?? SUGGESTIONS.UNKNOWN!,
       };
     }
+    // bug_pdv_createtype_guard_2026-07-28 (achado testando end-to-end contra
+    // o drizzle-kit real): `splitSqlStatements` atribui um comentario entre
+    // dois statements como PREFIXO do statement SEGUINTE, nao sufixo do
+    // anterior — e o drizzle-kit anexa `--> statement-breakpoint` logo apos
+    // o `;` de CADA statement. Resultado: todo statement exceto o primeiro
+    // do arquivo chega aqui com esse comentario colado na frente. O
+    // `node-sql-parser` tolera isso nativamente (pula comentario de borda na
+    // gramatica) — e por isso o caminho AST normal (CREATE TABLE parseavel,
+    // etc.) nunca teve esse problema. Os fallbacks REGEX abaixo usam ancora
+    // `^...$` estrita e SEM isto travariam (fail-closed) qualquer statement
+    // que nao seja o primeiro do arquivo — inclusive o `detectUnparseable
+    // AdditiveCreate` ja existente (CREATE TABLE com enum customizado), que
+    // tinha essa mesma lacuna latente (nunca testada com 2+ statements).
+    const sqlSemComentarioDeBorda = stripEdgeComments(sql);
+
     // CREATE de objeto nomeado novo que o parser nao parseou (ex.: CREATE TABLE
     // com coluna de tipo definido pelo usuario) — aditivo (bug_59ee92b8).
-    const additiveHit = detectUnparseableAdditiveCreate(sql);
+    const additiveHit = detectUnparseableAdditiveCreate(sqlSemComentarioDeBorda);
     if (additiveHit) {
       return {
         sql,
         severity: STATEMENT_RULES[additiveHit.rule], // aditiva
         reason: additiveHit.reason,
+      };
+    }
+    // Guard idempotente de CREATE TYPE (bug_pdv_createtype_guard_2026-07-28):
+    // Postgres nao tem `CREATE TYPE IF NOT EXISTS`, entao geradores de DDL
+    // idempotente (ex.: neetru-cli) embrulham em `DO $$ BEGIN CREATE TYPE ...;
+    // EXCEPTION WHEN duplicate_object THEN null; END $$;`. `node-sql-parser`
+    // nao entende blocos PL/pgSQL `DO $$...$$` (sempre cai neste catch) — sem
+    // este fallback, uma migracao 100% aditiva (so cria enums que talvez ja
+    // existam) virava UNKNOWN -> destrutiva, forcando confirm --mfa-token
+    // sem necessidade nenhuma.
+    const idempotentTypeHit = detectIdempotentCreateTypeGuard(sqlSemComentarioDeBorda);
+    if (idempotentTypeHit) {
+      return {
+        sql,
+        severity: STATEMENT_RULES[idempotentTypeHit.rule], // aditiva
+        reason: idempotentTypeHit.reason,
+      };
+    }
+    // Guard idempotente de ADD CONSTRAINT (mesmo bug_pdv_createtype_guard_
+    // 2026-07-28): Postgres nao tem `ADD CONSTRAINT IF NOT EXISTS`.
+    const idempotentConstraintHit = detectIdempotentAddConstraintGuard(sqlSemComentarioDeBorda);
+    if (idempotentConstraintHit) {
+      return {
+        sql,
+        severity: STATEMENT_RULES[idempotentConstraintHit.rule], // aditiva
+        reason: idempotentConstraintHit.reason,
       };
     }
     return {
