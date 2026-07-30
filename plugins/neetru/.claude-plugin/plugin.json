@@ -1,7 +1,7 @@
 {
   "name": "neetru",
-  "version": "1.1.0",
-  "description": "Skills do ecossistema Neetru para Claude Code — CLI control plane (@neetru/cli@2.26.2) e SDK runtime (@neetru/sdk@3.1.15). Cobre scaffold, deploy, bancos por produto, namespaces do SDK e libs de suporte.",
+  "version": "1.2.0",
+  "description": "Skills do ecossistema Neetru para Claude Code — CLI control plane (@neetru/cli@2.26.2) e SDK runtime (@neetru/sdk@3.1.15). Cobre scaffold, deploy, bancos por produto, namespaces do SDK, triagem de incidentes (é meu bug ou do Core?) e libs de suporte.",
   "author": {
     "name": "Neetru",
     "email": "neetrucode@gmail.com"

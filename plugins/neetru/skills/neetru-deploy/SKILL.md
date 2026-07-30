@@ -24,6 +24,7 @@ Em `--target vm`, o Core **rejeita/derruba** chaves cujo nome casa `*SECRET*` / 
 - **VM:** `--domain <host>` no `deploy` faz o agente criar o **vhost Apache** na VM. É o caminho certo pra app em VM.
 - **Cloud Run:** `neetru hosting create-mapping --service --domain --mfa-token` (destrutivo top-tier, CNAME→`ghs.googlehosted.com`). **Em VM isso dá 403** (`run.domainmappings.create`) — não é teu erro, é o caminho errado pro target.
 - Regra: target VM → `--domain` inline; target cloud-run → `hosting create-mapping`.
+- **Ciclo de vida do domínio ≠ Neetru:** o mapping só liga o domínio ao serviço. A **registrabilidade** (renovação, delegação, NXDOMAIN) vive no registrador/DNS, FORA do Neetru. Se o site "não conecta" e o domínio dá NXDOMAIN no NS do TLD, é **domínio expirado** — nenhum deploy/mapping conserta. Isole com `curl -H "Host: <dom>" https://<origem>/` (200 direto = app são, culpa é do domínio). Triagem de camada em `neetru-troubleshooting` › "Serviço inacessível".
 
 ## 🔴 Armadilha #3 — build de prod compilado com env=dev (`.env.local` venceu `.env.production`)
 
