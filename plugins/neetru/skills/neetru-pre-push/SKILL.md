@@ -44,7 +44,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 ## Gate vermelho — diagnosticar antes de pular
 - **Rode de novo a etapa isolada** (`npm test -- <arquivo>`, `npx vitest run <arquivo>`). Passou isolada e falha na suíte = flaky/recurso, não bug.
 - **Core, vitest com centenas de falhas de timeout em jsdom:** rebuild do graphify em background disputando CPU. Espere terminar e rode de novo (`reference_core_prepush_gate_flaky`).
-- **`Failed to load url @neetru/<lib>` / módulo sem `dist`:** install parcial em `node_modules` — `npm ci` resolve, **mas nunca rode npm com outra sessão mexendo no mesmo repo**. Se não pode reinstalar agora, é caso legítimo de skip (declare no PR).
+- **`Failed to load url @neetru/<lib>`:** primeiro cheque BOM — `head -c3 node_modules/@neetru/<lib>/package.json | od -An -tx1` dando `ef bb bf` = versão publicada com BOM (Node tolera, Vite não). Aconteceu com `sql-guard 0.1.7`, `pii-mask 0.1.1` e mais 3 (`bug_bf5a98a0`) — atualize pra versão corrigida; reparo local só enquanto não sai: tirar os 3 bytes do arquivo em `node_modules` (não commita nada). Sem BOM e sem `dist` = install parcial → `npm ci`, **nunca com outra sessão mexendo no mesmo repo** (se não pode agora, é skip legítimo — declare no PR).
 - **Falha real no seu diff:** conserte. É pra isso que o gate existe.
 
 ## Quando pular é aceitável (e como)
