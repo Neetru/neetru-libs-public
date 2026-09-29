@@ -1,8 +1,8 @@
 {
   "name": "@neetru/sql-guard",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "description": "Classificador read-only de SQL + gate de hardening do Neetru Core DB. Decide se um statement é seguro para o visualizador de banco, impõe LIMIT em SELECTs e barra break-glass com WHERE tautológico. Fail-closed.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "node ../../scripts/check-package-json.mjs && npm run build"
   },
   "dependencies": {
     "node-sql-parser": "^5.0.0"

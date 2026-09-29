@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "node ../../scripts/check-package-json.mjs && npm run build"
   },
   "dependencies": {},
   "devDependencies": {
