@@ -109,6 +109,8 @@ outra pessoa (ou você, semana que vem) pode rodar de novo é.
 ## Checklist rápido (relê antes de qualquer "terminei")
 
 - [ ] Testei de verdade (suíte automatizada), não só "parece que funciona"?
+- [ ] Subi pelo gate de pre-push verde (é o único CI — skill `neetru-pre-push`),
+      sem skip não-declarado?
 - [ ] Chequei bug tracker + saúde de infra + chat antes de considerar parado?
 - [ ] Alguma tarefa anterior ficou pra trás de um incêndio? Retomei?
 - [ ] Meu relatório é completo (feito+evidência / pendente+motivo / quebrado),
