@@ -10,9 +10,10 @@ description: Use when an AI (Claude) building a Neetru product (pdv-agiliza, ges
 ## Caminho ordenado VM → prod
 1. `neetru build [--stack node|docker|php-apache|static]` → gera o artefato.
 2. **Usar VM EXISTENTE** — `neetru servers list` (VMs são multipropósito/densas). **NUNCA** provisionar VM nova em silêncio: VM nova = **custo, owner-gated** (`neetru-regras`).
-3. `neetru deploy --target vm --server <id> --domain <host> --port <interna> [--env-file .env] [--artifact-url … --artifact-sha256 …] --env prod --non-interactive` — **confira as flags exatas com `neetru deploy --help`** (o `cli-reference` pode divergir do CLI instalado; ex: `--env` é usado em campo mas não consta na referência lida).
-4. Agente sobe o vhost → injeta o secret server-side → app no ar.
-5. Smoke: `/api/health` 200 + `neetru status` + `neetru logs -f --json`.
+3. **Step-up MFA (CLI ≥ 2.28.10):** deploy em prod exige TOTP de um **staff com 2FA** — `neetru auth mfa-session` (abre sessão de 1h) **ou** `--mfa-token <código>` no comando. Em `--json`/`--non-interactive`/sem TTY **sem** MFA o comando **para** (fail-closed; `error: "mfa_required"`, exit 2). IA de produto não tem TOTP → deploy de prod é um passo **humano/owner** (cobre via `neetru-chat`); o que a IA faz sozinha é staging/workspace.
+4. `neetru deploy --target vm --server <id> --domain <host> --port <interna> [--env-file .env] [--artifact-url … --artifact-sha256 …] --env prod --mfa-token <código>` — **confira as flags exatas com `neetru deploy --help`** (o `cli-reference` pode divergir do CLI instalado; ex: `--env` é usado em campo mas não consta na referência lida).
+5. Agente sobe o vhost → injeta o secret server-side → app no ar.
+6. Smoke: `/api/health` 200 + `neetru status` + `neetru logs -f --json`.
 
 ## 🔴 Armadilha #1 — `--env-file` DERRUBA segredos (fail-closed)
 Em `--target vm`, o Core **rejeita/derruba** chaves cujo nome casa `*SECRET*` / `*KEY*` / `*TOKEN*` / `*PASSWORD*` / `DATABASE_URL` (fail-closed — comportamento confirmado em campo pelo pdv). Logo **`NEETRU_OIDC_CLIENT_SECRET`/`NEETRU_API_KEY` NÃO sobrevivem ao `--env-file`** → o app sobe sem credencial → `missing_api_key`/`unauthorized` SÓ em prod (passa em dev por causa dos mocks).
