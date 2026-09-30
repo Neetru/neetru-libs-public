@@ -17,6 +17,7 @@ description: Use when an AI (Claude) working on a Neetru PRODUCT or the Core is 
 
 ## Segurança / operação
 - **Segurança e confiabilidade ACIMA de velocidade.** `--dry-run` em destrutivo, mudanças incrementais revisáveis, type-check/build antes de prod. Em tradeoff, escolha o caminho mais confiável.
+- **O pre-push local É o CI** (GitHub Actions sem billing — nada roda no servidor). Todo repo Neetru tem o gate (typecheck → lint → testes), push direto pra `main` é bloqueado, e `NEETRU_SKIP_PREPUSH=1` só em emergência **com motivo escrito no PR**. Repo sem gate → adote. Detalhe: skill `neetru-pre-push`.
 - **Codex review por prudência** sempre que possível antes de commit/deploy (camada extra além do gate FULL).
 - **VMs são multipropósito e densas** (vários bancos/produtos juntos); naming **`snee-NNN-role`**, NUNCA slug de produto. (Nota: o spec formal `snee-NNN-role` está em memória do Core, não nos docs públicos.) Agente sempre na última versão.
 

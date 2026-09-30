@@ -32,9 +32,10 @@ Três faixas. O produto-Claude precisa saber em qual está antes de agir.
 - **Sem plano/tier NO produto** — plano existe só pros **clientes finais**; produto é da Neetru. Teto técnico = guardrail, não gating comercial.
 - **Copy:** nunca citar `core.neetru.com` em superfície pública; sem auto-elogio ("padrão Apple ou superior"); CTA pública → `minhaconta.neetru.com`.
 - **Dark mode é staff-only** → telas do cliente/públicas usam `.force-light` (não herdam `.dark` do aparelho).
+- **O pre-push local É o CI** (Actions sem billing) → o repo precisa do gate ligado e o `.md` diz como rodar/pular. Se o produto ainda não tem, **adote junto** com a geração do arquivo (skill `neetru-pre-push`).
 
 ## Ponteiros pras skills neetru-* (roteador a embutir)
-Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`** · chat dev → **`neetru-chat`** · regras vivas → **`neetru-regras`** · deploy prod → **`neetru-deploy`** · migração de schema → **`neetru-migrations`** · erro de `@neetru/sdk` → **`neetru-sdk-troubleshooting`** · "merged ≠ live" → **`neetru-release-gates`** · "é meu bug ou do Core?" → **`neetru-troubleshooting`** · sintaxe de CLI/SDK → **`neetru`**. Instalar/atualizar: `neetru marketplace skills install` (NÃO existe `neetru skills install`).
+Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`** · chat dev → **`neetru-chat`** · regras vivas → **`neetru-regras`** · deploy prod → **`neetru-deploy`** · migração de schema → **`neetru-migrations`** · erro de `@neetru/sdk` → **`neetru-sdk-troubleshooting`** · "merged ≠ live" → **`neetru-release-gates`** · gate de push/CI local → **`neetru-pre-push`** · "é meu bug ou do Core?" → **`neetru-troubleshooting`** · sintaxe de CLI/SDK → **`neetru`**. Instalar/atualizar: `neetru marketplace skills install` (NÃO existe `neetru skills install`).
 
 ## Como GERAR / ATUALIZAR o arquivo
 1. **Descubra o produto** — nome, slug, stack (Next.js / Node API), target de deploy (workspace|vm), major do SDK que ele pina. Confirme versões reais (`npm view @neetru/sdk version`, `neetru --version`) e regras vivas via `neetru-docs`/`neetru-regras` antes de escrever — **não pine número fixo que envelhece**; use header "last verified: <data>".
@@ -85,15 +86,23 @@ Dev local: `NEETRU_ENV=dev` (mocks). Dados fluem **só pelo SDK**.
 - **Copy** — sem `core.neetru.com` em superfície pública; sem auto-elogio; CTA → `minhaconta.neetru.com`.
 - **Dark mode staff-only** — telas do cliente usam `.force-light`.
 
+## Gate de pre-push (o CI é local — Actions da org sem billing)
+- Todo `git push` roda `scripts/pre-push-gate.mjs`: <etapas reais deste repo, ex.: typecheck → lint → test>. Ver o plano: `node scripts/pre-push-gate.mjs --plan`.
+- Push direto pra `main` é **bloqueado** (branch → PR → merge).
+- Push intermediário rápido: `NEETRU_PREPUSH_FAST=1` (pula testes). Antes de mergear: `NEETRU_PREPUSH_FULL=1` (inclui build) e cito a saída verde no PR.
+- `NEETRU_SKIP_PREPUSH=1` só em emergência, com o motivo escrito no PR. Nunca `--no-verify`.
+- Hook não dispara após clonar → `npm install` (o `prepare` liga `core.hooksPath=.githooks`).
+
 ## Skills a acionar (roteador)
 - Primeiro dia → `neetru-onboarding` · docs → `neetru-docs` · chat → `neetru-chat` · regras → `neetru-regras`
 - Deploy prod → `neetru-deploy` · migração → `neetru-migrations`
 - Erro de `@neetru/sdk` → `neetru-sdk-troubleshooting` · "merged ≠ live" → `neetru-release-gates`
 - "é meu bug ou do Core?" → `neetru-troubleshooting` · comando CLI/SDK → `neetru`
+- Push barrado / montar o gate → `neetru-pre-push`
 - Instalar/atualizar skills: `neetru marketplace skills install`
 
 ## Antes de declarar pronto
-`tsc`/build/testes verdes · deploy `resolved` só após LIVE + smoke (`/api/health` 200, `neetru status`, `neetru logs`) · ground-truth (só o que verifiquei) · zero segredo no chat/arquivo.
+Gate de pre-push verde (FULL antes do merge; sem skip não-declarado) · `tsc`/build/testes verdes · deploy `resolved` só após LIVE + smoke (`/api/health` 200, `neetru status`, `neetru logs`) · ground-truth (só o que verifiquei) · zero segredo no chat/arquivo.
 
 <!-- ↓↓↓ Abaixo: seções próprias do produto (domínio, comandos, notas do time). NÃO apagar num refresh. ↓↓↓ -->
 ```

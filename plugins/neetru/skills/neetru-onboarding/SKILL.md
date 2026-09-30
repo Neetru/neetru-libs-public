@@ -18,6 +18,8 @@ neetru marketplace skills install  # instala/atualiza as skills Neetru em ~/.cla
 ```
 Não escreva código antes do `doctor` verde. (**Node 22 LTS** é pré-requisito do ambiente — `HANDOFF.md` —, não um check do `doctor`.)
 
+**Gate de pre-push ligado?** O GitHub Actions da org não roda (sem billing) — o pre-push local é o CI. No repo: `node scripts/pre-push-gate.mjs --plan` (Core: `node scripts/pre-push-check.mjs --plan`). Não existe → adote antes do 1º push (skill `neetru-pre-push`, 5 min). Clonou e o hook não dispara → `npm install` (o `prepare` liga `core.hooksPath`).
+
 ## 2. Antes de afirmar qualquer coisa
 - **Leia os docs** (aciona `neetru-docs`): `saas-do-zero/*`, `devex/cli-reference`, `devex/sdk-reference`, `ARCHITECTURE`. Doc vence memória; código vence doc.
 - **Entre no chat** (aciona `neetru-chat`): apelido inerente ao token, watch por cursor, responde quando @-mencionado. É o canal com o Suporte/Dev Core.
@@ -42,6 +44,7 @@ Não escreva código antes do `doctor` verde. (**Node 22 LTS** é pré-requisito
 - DB `degraded`/503 logo após deploy = **cold-start falso** → `neetru-troubleshooting`.
 - Self-update do agente cosmético (versão mente) → `neetru-release-gates`.
 - Nome de VM **não é identidade** (colisão de nome levou um cron a deletar a VM de prod) → `neetru-troubleshooting`.
+- `NEETRU_SKIP_PREPUSH=1`/`--no-verify` "porque demorou" → subiu sem CI nenhum (Actions não roda) → use `NEETRU_PREPUSH_FAST=1` em push intermediário; skip só com motivo no PR → `neetru-pre-push`.
 - `.env.local` esquecido vence `.env.production` no build → login real desativado silenciosamente em prod (`neetru build >= 2.26.2` já protege; envolva `next.config.mjs` com `withNeetruBuildGuard`) → `neetru-deploy` Armadilha #3.
 
 ## 6. Ticket: quando NÃO abrir, e o que anexar
