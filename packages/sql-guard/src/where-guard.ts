@@ -33,9 +33,11 @@ const { Parser } = pkg;
  *    alarga o conjunto e ramos complementares cobrem todas as linhas, ex.:
  *    `col IS NOT NULL OR col IS NULL` cobre todas as linhas);
  *  - o WHERE usa `LIKE` / `ILIKE` POSITIVO com padrao so-`%` (`LIKE '%'`,
- *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `NOT LIKE`,
- *    `LIKE '_'`, `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados
- *    (restritivos);
+ *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `LIKE '_'`,
+ *    `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados (restritivos);
+ *  - o WHERE usa operador NEGATIVO/de-exclusao (`!=`, `<>`, `IS NOT`,
+ *    `NOT IN`, `NOT LIKE`, `NOT ILIKE`, `NOT BETWEEN`) — casa ~todas as
+ *    linhas, nao prova restricao (bug_2c3ab1e7);
  *  - o WHERE compara com NULL via `<>` / `!=` (`col <> NULL`, `col != NULL`):
  *    em SQL essa comparacao e SEMPRE UNKNOWN (nunca TRUE) — nao e um predicado
  *    restritivo real e tipicamente indica erro de logica do operador;
@@ -140,9 +142,10 @@ export function assertNonTrivialWhere(
  *    Break-glass quase nunca precisa de OR; quem precisa de varios valores usa
  *    `IN (...)` (operador distinto, nao um no OR — logo nao afetado) ou roda
  *    statements separados auditados;
- *  - comparacao folha (`=`, `<>`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `IS`,
- *    `IS NOT`, `LIKE`, `NOT LIKE`, `BETWEEN`, ...): restritiva se um lado for
- *    coluna e o outro literal/placeholder, EXCETO `col = col` (tautologia).
+ *  - comparacao folha POSITIVA (`=`, `>`, `>=`, `<`, `<=`, `IN`, `IS`,
+ *    `LIKE`, `ILIKE`, `BETWEEN`): restritiva se um lado for coluna e o outro
+ *    literal/placeholder, EXCETO `col = col` (tautologia). Operadores
+ *    negativos (`<>`, `!=`, `IS NOT`, `NOT ...`) nunca contam (bug_2c3ab1e7).
  *
  * Conservador por design (fail-closed): qualquer forma nao reconhecida —
  * `unary_expr` (`NOT ...`), funcoes soltas, comparacao coluna-vs-coluna,
@@ -212,11 +215,11 @@ function isProvablyRestrictive(node: unknown): boolean {
  *  - `col <> NULL` / `col != NULL`: em SQL a comparacao de qualquer valor com
  *    NULL via <>/!= retorna UNKNOWN (nunca TRUE). Fail-closed: nao podemos
  *    provar que e restritivo (nenhuma linha e afetada, mas por razao errada).
- *    Quem quer filtrar nulos deve usar col IS NOT NULL;
+ *    (Hoje ja coberto por NON_RESTRICTIVE_OPS, que rejeita todo `<>`/`!=`.)
  *  - `col LIKE '%'` / `col ILIKE '%%'`: padrao composto SO de `%` corresponde
- *    a QUALQUER string nao-NULL — always-true. Recusado. So vale para o
- *    LIKE/ILIKE POSITIVO: `NOT LIKE '%'` e o oposto (restritivo) e continua
- *    aceito. `_` casa exatamente 1 char e `%_%` exige >=1 char — ambos
+ *    a QUALQUER string nao-NULL — always-true. Recusado. (`NOT LIKE` e
+ *    rejeitado antes, por ser negativo — bug_2c3ab1e7.)
+ *    `_` casa exatamente 1 char e `%_%` exige >=1 char — ambos
  *    restritivos, NAO bloqueados. Com clausula ESCAPE o `%` pode ser literal,
  *    entao a presenca de ESCAPE pula o bloqueio (conservador, anti-FP).
  */
@@ -247,8 +250,27 @@ function isColumnVsValuePredicate(
   ]);
   if (!COMPARISON_OPS.has(op)) return false;
 
+  // bug_2c3ab1e7: operadores NEGATIVOS/de-exclusao casam ~TODAS as linhas
+  // (excluem um conjunto pequeno) -> NAO provam restricao pro break-glass.
+  // `col IS NOT NULL` (classico), `col != x`, `col <> x`, `NOT IN/LIKE/BETWEEN`
+  // passavam como restritivos e furavam a guarda. Break-glass deve usar
+  // predicado POSITIVO que estreita (`= x`, `IN (...)`, `> x`, `IS NULL`,
+  // `LIKE 'prefixo%'`). Este bloco (fb6d031) foi perdido num merge de julho e
+  // restaurado em 2026-09-30 — e o comportamento publicado desde a 0.1.7.
+  const NON_RESTRICTIVE_OPS = new Set([
+    '!=',
+    '<>',
+    'IS NOT',
+    'NOT IN',
+    'NOT LIKE',
+    'NOT ILIKE',
+    'NOT BETWEEN',
+  ]);
+  if (NON_RESTRICTIVE_OPS.has(op)) return false;
+
   // RC-F: col <> NULL / col != NULL — em SQL essa comparacao e SEMPRE UNKNOWN
-  // (nunca TRUE). Fail-closed: nao e um predicado restritivo real.
+  // (nunca TRUE). Fail-closed: nao e um predicado restritivo real. Redundante
+  // com NON_RESTRICTIVE_OPS acima; mantido como defesa se aquela lista mudar.
   if (
     (op === '<>' || op === '!=') &&
     (isNullLiteralNode(left) || isNullLiteralNode(right))
