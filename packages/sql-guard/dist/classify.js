@@ -144,7 +144,7 @@ export function classifyStatement(sql, dialect = 'postgresql') {
     // DELETE roda em autocommit (7/7 linhas apagadas no teste). Um visualizador
     // nunca precisa de `\'`/`\"` (aspa dentro de string = `''`). Checado no RAW.
     if (trimmed.includes("\\'") || trimmed.includes('\\"')) {
-        return unsafe('unknown', "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Para aspa dentro de string use ''.");
+        return unsafe('unknown', "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Aspa simples dentro de string: use ''. JSON com aspa escapada: monte com jsonb_build_object(...). String terminando em barra: concatene chr(92).");
     }
     // ---- fallbacks por palavra-chave (parser nao cobre no dialeto pg) ----
     const kw = keywordPrefix(trimmed);

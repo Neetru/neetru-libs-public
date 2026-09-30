@@ -183,7 +183,7 @@ export function classifyStatement(
   if (trimmed.includes("\\'") || trimmed.includes('\\"')) {
     return unsafe(
       'unknown',
-      "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Para aspa dentro de string use ''.",
+      "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Aspa simples dentro de string: use ''. JSON com aspa escapada: monte com jsonb_build_object(...). String terminando em barra: concatene chr(92).",
     );
   }
 

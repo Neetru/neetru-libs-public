@@ -65,7 +65,7 @@ export function assertNonTrivialWhere(sql, dialect = 'postgresql') {
     // `name = 'x\' OR 1=1` — apaga a tabela inteira enquanto o guard ve um
     // literal so. Ambiguo entre parser e banco -> recusado (fail-closed).
     if (sql.includes("\\'") || sql.includes('\\"')) {
-        throw new Error("assertNonTrivialWhere: barra antes de aspa (\\' ou \\\") e ambigua entre o parser e o banco — recusado (fail-closed). Para aspa dentro de string use ''.");
+        throw new Error("assertNonTrivialWhere: barra antes de aspa (\\' ou \\\") e ambigua entre o parser e o banco — recusado (fail-closed). Aspa simples dentro de string: use ''. JSON com aspa escapada: monte com jsonb_build_object(...). String terminando em barra: concatene chr(92).");
     }
     const parser = new Parser();
     let parsed;
