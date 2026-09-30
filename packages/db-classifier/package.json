@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "node ../../scripts/check-package-json.mjs && npm run build"
   },
   "dependencies": {
     "node-sql-parser": "^5.0.0"
