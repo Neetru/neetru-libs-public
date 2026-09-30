@@ -27,9 +27,14 @@ import type { Dialect } from './classify.js';
  *  - o WHERE contem QUALQUER `OR` (rejeitado categoricamente — OR sempre
  *    alarga o conjunto e ramos complementares cobrem todas as linhas, ex.:
  *    `col IS NOT NULL OR col IS NULL` cobre todas as linhas);
+ *  - o SQL contem barra antes de aspa (`\'`, `\"`) — o parser le como aspa
+ *    escapada, o Postgres (standard_conforming_strings=on) fecha a string ali:
+ *    `name = 'x\' OR 1=1 --'` parece um literal so pro guard e apaga a tabela
+ *    inteira no banco. Aspa dentro de string: use `''`;
  *  - o WHERE usa `LIKE` / `ILIKE` POSITIVO com padrao so-`%` (`LIKE '%'`,
- *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `LIKE '_'`,
- *    `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados (restritivos);
+ *    `LIKE '%%'`), com ou sem ESCAPE — always-true para qualquer string
+ *    nao-NULL (`LIKE '%' ESCAPE '!'` continua curinga). `LIKE '_'` e
+ *    `LIKE '%_%'` NAO sao bloqueados (restritivos);
  *  - o WHERE usa operador NEGATIVO/de-exclusao (`!=`, `<>`, `IS NOT`,
  *    `NOT IN`, `NOT LIKE`, `NOT ILIKE`, `NOT BETWEEN`) — casa ~todas as
  *    linhas, nao prova restricao (bug_2c3ab1e7);
@@ -42,8 +47,8 @@ import type { Dialect } from './classify.js';
  * Passa SOMENTE quando o WHERE e, ou e uma arvore `AND` cujos ramos resolvem
  * para, um predicado em que pelo menos um operando e uma referencia de coluna
  * comparada contra um literal ou um placeholder/parametro (`id = $1`,
- * `status = 'x'`, `age > 5`, `col IN (...)`, `col IS NOT NULL`,
- * `col LIKE '...'`, ...). `IN (...)` e um operador distinto, NAO um no `OR` —
+ * `status = 'x'`, `age > 5`, `col IN (...)`, `col IS NULL`,
+ * `col LIKE 'prefixo%'`, ...). `IN (...)` e um operador distinto, NAO um no `OR` —
  * logo continua aceito.
  *
  * @param sql      O statement UPDATE/DELETE.
