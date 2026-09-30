@@ -273,3 +273,30 @@ describe('classifyStatement — determinismo', () => {
     expect(a).toEqual(b);
   });
 });
+
+// Auditoria 2026-09-30 (CRIT, reproduzido em Postgres real): `\'` — o parser
+// ve aspa escapada, o Postgres (standard_conforming_strings=on) fecha a string.
+// O ataque abaixo passava como SELECT seguro e, no fluxo do visualizador
+// (BEGIN READ ONLY -> exec -> ROLLBACK), o COMMIT injetado encerrava a
+// transacao read-only e o DELETE apagava a tabela inteira.
+describe('classifyStatement — barra antes de aspa (fail-closed)', () => {
+  const B = String.fromCharCode(92); // barra invertida
+  it.each([
+    `SELECT * FROM users WHERE name = 'x${B}') AS a; COMMIT; DELETE FROM users; SELECT * FROM (SELECT 1 --'`,
+    `SELECT * FROM users WHERE name = 'x${B}'; DELETE FROM users; --'`,
+    `SELECT * FROM users WHERE name = 'O${B}'Brien'`,
+    `SELECT * FROM users WHERE name = "x${B}"`,
+  ])('recusa %s', (sql) => {
+    const v = classifyStatement(sql);
+    expect(v.safe).toBe(false);
+    expect(v.reason).toMatch(/barra antes de aspa/);
+  });
+
+  it("aspa dobrada ('') continua aceita", () => {
+    expect(classifyStatement("SELECT * FROM users WHERE name = 'O''Brien'").safe).toBe(true);
+  });
+
+  it('barra que nao precede aspa continua aceita', () => {
+    expect(classifyStatement(`SELECT * FROM files WHERE path = 'C:${B}dir${B}a.txt'`).safe).toBe(true);
+  });
+});

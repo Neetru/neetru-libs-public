@@ -134,6 +134,18 @@ export function classifyStatement(sql, dialect = 'postgresql') {
     if (/\/\*!/.test(trimmed)) {
         return unsafe('unknown', 'SQL contem comentario executavel MySQL (/*! ... */) cujo conteudo o servidor executaria escondido das guardas — recusado por seguranca (fail-closed).');
     }
+    // ---- barra antes de aspa — parser e Postgres discordam (fail-closed) --
+    // Auditoria 2026-09-30 (CRIT, reproduzido em Postgres real): o parser le
+    // `\'` como aspa escapada, mas o Postgres com standard_conforming_strings=on
+    // (default) FECHA a string ali. Um
+    //   SELECT * FROM t WHERE a = 'x\') AS a; COMMIT; DELETE FROM t; SELECT * FROM (SELECT 1 --'
+    // chega aqui como UM SELECT com um literal (safe:true), mas o banco executa
+    // 4 statements: o COMMIT encerra a transacao READ ONLY do visualizador e o
+    // DELETE roda em autocommit (7/7 linhas apagadas no teste). Um visualizador
+    // nunca precisa de `\'`/`\"` (aspa dentro de string = `''`). Checado no RAW.
+    if (trimmed.includes("\\'") || trimmed.includes('\\"')) {
+        return unsafe('unknown', "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Para aspa dentro de string use ''.");
+    }
     // ---- fallbacks por palavra-chave (parser nao cobre no dialeto pg) ----
     const kw = keywordPrefix(trimmed);
     if (kw === 'copy') {

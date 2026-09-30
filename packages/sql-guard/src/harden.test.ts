@@ -129,3 +129,14 @@ describe('hardenSelect — determinismo', () => {
     expect(a).toBe(b);
   });
 });
+
+// Auditoria 2026-09-30 (CRIT): hardenSelect so EMBRULHA o SQL cru — se o
+// classificador aceitasse `\'`, o texto executado no banco teria statements
+// escondidos. Garante que o embrulho nunca acontece.
+describe('hardenSelect — barra antes de aspa (fail-closed)', () => {
+  it('joga no ataque COMMIT/DELETE escondido atras de barra+aspa', () => {
+    const B = String.fromCharCode(92); // barra invertida
+    const sql = `SELECT * FROM users WHERE name = 'x${B}') AS a; COMMIT; DELETE FROM users; SELECT * FROM (SELECT 1 --'`;
+    expect(() => hardenSelect(sql, { maxRows: 100 })).toThrow(/barra antes de aspa/);
+  });
+});

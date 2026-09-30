@@ -387,14 +387,49 @@ describe('assertNonTrivialWhere — passa (RC-F: anti-falso-positivo)', () => {
     ).not.toThrow();
   });
 
-  it("DELETE com LIKE '%%' ESCAPE '%' passa (ESCAPE torna % literal)", () => {
-    // FP-3: com ESCAPE o `%` pode ser literal -> nao da pra provar wildcard ->
-    // conservador, pula o bloqueio (restritivo na pratica: casa a string '%').
+});
+
+// Revisao QA 2026-09-30: a antiga excecao FP-3 ("ESCAPE torna % literal")
+// pulava o bloqueio pra QUALQUER ESCAPE — `LIKE '%' ESCAPE '!'` passava e, em
+// Postgres real, apagou 6/7 linhas. ESCAPE nao muda o veredito (= 0.1.7).
+describe('assertNonTrivialWhere — lanca (LIKE so-% com ESCAPE)', () => {
+  it.each([
+    "DELETE FROM users WHERE name LIKE '%%' ESCAPE '%'",
+    "DELETE FROM users WHERE name LIKE '%' ESCAPE '!'",
+    "DELETE FROM users WHERE name LIKE '%%' ESCAPE '#'",
+    "DELETE FROM users WHERE name LIKE '%' ESCAPE ''",
+    "DELETE FROM users WHERE name ILIKE '%' ESCAPE 'x'",
+    "UPDATE users SET x = 1 WHERE name LIKE '%%%%' ESCAPE '%'",
+  ])('%s lanca', (sql) => {
+    expect(() => assertNonTrivialWhere(sql)).toThrow();
+  });
+});
+
+// Revisao QA 2026-09-30: parser le `\'` como aspa escapada; o Postgres
+// (standard_conforming_strings=on) fecha a string ali. `name = 'x\' OR 1=1 --'`
+// passava pelo guard (1 literal) e apagou 7/7 linhas em Postgres real.
+describe('assertNonTrivialWhere — lanca (barra antes de aspa e ambigua)', () => {
+  const B = '\\';
+  it.each([
+    `DELETE FROM users WHERE name = 'x${B}' OR 1=1 --'`,
+    `UPDATE users SET x = 1 WHERE name = 'O${B}'Brien'`,
+    `DELETE FROM users WHERE name = 'x${B}${B}' AND id = 1`,
+    `DELETE FROM users WHERE name = "x${B}" OR 1=1 --"`,
+  ])('%s lanca', (sql) => {
+    expect(() => assertNonTrivialWhere(sql)).toThrow(/barra antes de aspa/);
+  });
+
+  it("aspa dobrada ('') continua aceita", () => {
     expect(() =>
-      assertNonTrivialWhere("DELETE FROM users WHERE name LIKE '%%' ESCAPE '%'"),
+      assertNonTrivialWhere("UPDATE users SET x = 1 WHERE name = 'O''Brien'"),
     ).not.toThrow();
   });
 
+  it('barra que nao precede aspa continua aceita', () => {
+    expect(() =>
+      assertNonTrivialWhere(`DELETE FROM files WHERE path = 'C:${B}dir${B}a.txt'`),
+    ).not.toThrow();
+  });
 });
 
 // bug_2c3ab1e7 (restaurado 2026-09-30): a linha RC-F tratava estes negativos

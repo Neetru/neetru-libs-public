@@ -32,9 +32,14 @@ const { Parser } = pkg;
  *  - o WHERE contem QUALQUER `OR` (rejeitado categoricamente — OR sempre
  *    alarga o conjunto e ramos complementares cobrem todas as linhas, ex.:
  *    `col IS NOT NULL OR col IS NULL` cobre todas as linhas);
+ *  - o SQL contem barra antes de aspa (`\'`, `\"`) — o parser le como aspa
+ *    escapada, o Postgres (standard_conforming_strings=on) fecha a string ali:
+ *    `name = 'x\' OR 1=1 --'` parece um literal so pro guard e apaga a tabela
+ *    inteira no banco. Aspa dentro de string: use `''`;
  *  - o WHERE usa `LIKE` / `ILIKE` POSITIVO com padrao so-`%` (`LIKE '%'`,
- *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `LIKE '_'`,
- *    `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados (restritivos);
+ *    `LIKE '%%'`), com ou sem ESCAPE — always-true para qualquer string
+ *    nao-NULL (`LIKE '%' ESCAPE '!'` continua curinga). `LIKE '_'` e
+ *    `LIKE '%_%'` NAO sao bloqueados (restritivos);
  *  - o WHERE usa operador NEGATIVO/de-exclusao (`!=`, `<>`, `IS NOT`,
  *    `NOT IN`, `NOT LIKE`, `NOT ILIKE`, `NOT BETWEEN`) — casa ~todas as
  *    linhas, nao prova restricao (bug_2c3ab1e7);
@@ -47,8 +52,8 @@ const { Parser } = pkg;
  * Passa SOMENTE quando o WHERE e, ou e uma arvore `AND` cujos ramos resolvem
  * para, um predicado em que pelo menos um operando e uma referencia de coluna
  * comparada contra um literal ou um placeholder/parametro (`id = $1`,
- * `status = 'x'`, `age > 5`, `col IN (...)`, `col IS NOT NULL`,
- * `col LIKE '...'`, ...). `IN (...)` e um operador distinto, NAO um no `OR` —
+ * `status = 'x'`, `age > 5`, `col IN (...)`, `col IS NULL`,
+ * `col LIKE 'prefixo%'`, ...). `IN (...)` e um operador distinto, NAO um no `OR` —
  * logo continua aceito.
  *
  * @param sql      O statement UPDATE/DELETE.
@@ -61,6 +66,17 @@ export function assertNonTrivialWhere(
   if (typeof sql !== 'string' || sql.trim().length === 0) {
     throw new Error(
       'assertNonTrivialWhere: input SQL vazio — recusado (fail-closed).',
+    );
+  }
+
+  // Barra antes de aspa: o parser le `\'` como aspa escapada (estilo MySQL /
+  // E''), mas o Postgres com standard_conforming_strings=on (default) fecha a
+  // string na aspa. `name = 'x\' OR 1=1 --'` vira, no banco,
+  // `name = 'x\' OR 1=1` — apaga a tabela inteira enquanto o guard ve um
+  // literal so. Ambiguo entre parser e banco -> recusado (fail-closed).
+  if (sql.includes("\\'") || sql.includes('\\"')) {
+    throw new Error(
+      "assertNonTrivialWhere: barra antes de aspa (\\' ou \\\") e ambigua entre o parser e o banco — recusado (fail-closed). Para aspa dentro de string use ''.",
     );
   }
 
@@ -125,7 +141,8 @@ export function assertNonTrivialWhere(
  * Decide se um no de expressao do WHERE e COMPROVADAMENTE um predicado
  * restritivo nao-trivial.
  *
- * Retorna `true` SOMENTE quando o no e, ou e uma arvore `AND`/`OR` cujos ramos
+ * Retorna `true` SOMENTE quando o no e, ou e uma arvore `AND` (OR e sempre
+ * recusado) cujos ramos
  * resolvem para, uma comparacao/predicado em que pelo menos um operando e uma
  * referencia de coluna e o(s) outro(s) sao literais/placeholders — e o no NAO
  * e uma tautologia conhecida.
@@ -220,8 +237,8 @@ function isProvablyRestrictive(node: unknown): boolean {
  *    a QUALQUER string nao-NULL — always-true. Recusado. (`NOT LIKE` e
  *    rejeitado antes, por ser negativo — bug_2c3ab1e7.)
  *    `_` casa exatamente 1 char e `%_%` exige >=1 char — ambos
- *    restritivos, NAO bloqueados. Com clausula ESCAPE o `%` pode ser literal,
- *    entao a presenca de ESCAPE pula o bloqueio (conservador, anti-FP).
+ *    restritivos, NAO bloqueados. ESCAPE nao muda o veredito (ver
+ *    `isAlwaysTrueLikePattern`).
  */
 function isColumnVsValuePredicate(
   op: string,
@@ -280,8 +297,7 @@ function isColumnVsValuePredicate(
 
   // RC-F: LIKE/ILIKE POSITIVO com padrao so-`%` — corresponde a qualquer
   // string nao-NULL, tornando o predicado always-true. Recusar fail-closed.
-  // So o LIKE/ILIKE POSITIVO e tautologico: `NOT LIKE '%'` e o oposto
-  // (corresponde a NENHUMA string nao-NULL) — restritivo, nao bloqueado aqui.
+  // (`NOT LIKE`/`NOT ILIKE` ja foram recusados acima por NON_RESTRICTIVE_OPS.)
   if (
     (op === 'LIKE' || op === 'ILIKE') &&
     (isAlwaysTrueLikePattern(left) || isAlwaysTrueLikePattern(right))
@@ -385,12 +401,14 @@ function isNullLiteralNode(node: unknown): boolean {
  * MENOS 1 char (exclui a string vazia) — ambos sao predicados restritivos
  * reais, logo NAO sao always-true.
  *
- * ESCAPE: se o no de padrao carrega uma clausula `escape` (`LIKE '%%' ESCAPE
- * '%'`), o `%` pode estar escapado para virar literal — nao da pra provar que
- * e wildcard. Conservador/anti-FP: presenca de ESCAPE pula o bloqueio.
+ * ESCAPE NAO muda o veredito (fail-closed): `LIKE '%' ESCAPE '!'` continua
+ * curinga e apaga ~tudo. Uma versao anterior pulava o bloqueio com qualquer
+ * ESCAPE (anti-FP para `'%%' ESCAPE '%'`), o que deixava passar
+ * `LIKE '%' ESCAPE '<qualquer>'` — comprovado em Postgres real (6/7 linhas).
+ * Quem quer casar um `%` literal usa outro filtro positivo.
  *
- * Exemplos bloqueados: `'%'`, `'%%'`, `'%%%'`.
- * Exemplos aceitos: `'_'`, `'%_%'`, `'a%'`, `'%texto%'`, `'%%' ESCAPE '%'`.
+ * Exemplos bloqueados: `'%'`, `'%%'`, `'%%%'`, `'%' ESCAPE '!'`, `'%%' ESCAPE '%'`.
+ * Exemplos aceitos: `'_'`, `'%_%'`, `'a%'`, `'%texto%'`.
  */
 function isAlwaysTrueLikePattern(node: unknown): boolean {
   if (node == null || typeof node !== 'object') return false;
@@ -401,8 +419,6 @@ function isAlwaysTrueLikePattern(node: unknown): boolean {
     type === 'string' ||
     type === 'double_quote_string'
   ) {
-    // clausula ESCAPE presente -> `%` pode ser literal -> nao bloquear.
-    if (n['escape'] != null) return false;
     const val = typeof n['value'] === 'string' ? n['value'] : '';
     // padrao nao-vazio composto SOMENTE de `%` = always-true.
     return val.length > 0 && /^%+$/.test(val);
