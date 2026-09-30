@@ -25,6 +25,14 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 - **Core** (`Neetru/neetru-core`): `.husky/pre-push` → `scripts/pre-push-check.mjs` — variante **estendida e escopada ao diff** (base = merge-base com `origin/main`): `tsc` root sempre; `tsc` de `functions/` se `functions/**` mudou (sem `functions/node_modules` = erro, não skip); `eslint` só nos arquivos alterados de `src/**` (>30 → `src` inteiro); frontmatter + manifest se `docs/**` mudou; `vitest --changed <merge-base>` por padrão, **full** se mudou `package*.json`/`tsconfig*`/`vitest.*`/`.npmrc`/`functions/**`. Mesmos flags.
 - **Demais repos** (CLI, SDK, agente, libs, produtos): `scripts/pre-push-gate.mjs` (o template desta skill). Se o repo ainda não tem → adote (abaixo).
 
+## ⚠️ Worktree novo em repo com husky: NENHUM hook roda até você gerar `.husky/_`
+O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored) pelo `npm install`. Um `git worktree add` (inclusive os worktrees de agentes em `.claude/worktrees/`) **não tem essa pasta** e ninguém roda `npm install` nele (node_modules costuma vir por junction) → git não acha hook nenhum → **pre-commit e pre-push somem em silêncio** e o push sobe sem gate (achado 2026-09-30, Core PR #518).
+- **Ao criar o worktree:** `npx husky` na raiz dele (só gera `.husky/_`; não instala nada). Confira: `ls .husky/_/pre-push`.
+- **Esqueceu e já empurrou:** rode o gate na mão sobre o que subiu e cite a saída no PR:
+  `echo "refs/heads/<branch> $(git rev-parse HEAD) refs/heads/<branch> 0000000000000000000000000000000000000000" | node scripts/pre-push-check.mjs`
+- **NÃO** aponte `core.hooksPath` pro `.husky/_` da árvore principal: o `h` do husky resolve o hook relativo à própria pasta → todo worktree rodaria o gate da árvore principal (código errado).
+- Repos com o template desta skill (`.githooks/` versionado + `core.hooksPath=.githooks` relativo) **não** têm o problema: a pasta existe em todo worktree.
+
 ## Adotar num repo que não tem (5 min)
 1. Copie `pre-push-gate.mjs` **desta pasta da skill** pra `scripts/pre-push-gate.mjs` do repo. Sem dependências (Node ≥ 18 + git). Detecta a stack:
    - **Node:** script `typecheck`; senão `lint` se for `tsc --noEmit`; senão `npx tsc --noEmit` se houver `tsconfig.json` → `lint` → `test` → (`build` em FULL).
