@@ -25,7 +25,17 @@ import type { Dialect } from './classify.js';
  *  - nao ha clausula WHERE;
  *  - o WHERE e tautologico (`1=1`, `true`, `'a'='a'`, `1`, `col = col`, ...);
  *  - o WHERE contem QUALQUER `OR` (rejeitado categoricamente — OR sempre
- *    alarga o conjunto e ramos complementares cobrem todas as linhas);
+ *    alarga o conjunto e ramos complementares cobrem todas as linhas, ex.:
+ *    `col IS NOT NULL OR col IS NULL` cobre todas as linhas);
+ *  - o WHERE usa `LIKE` / `ILIKE` POSITIVO com padrao so-`%` (`LIKE '%'`,
+ *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `LIKE '_'`,
+ *    `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados (restritivos);
+ *  - o WHERE usa operador NEGATIVO/de-exclusao (`!=`, `<>`, `IS NOT`,
+ *    `NOT IN`, `NOT LIKE`, `NOT ILIKE`, `NOT BETWEEN`) — casa ~todas as
+ *    linhas, nao prova restricao (bug_2c3ab1e7);
+ *  - o WHERE compara com NULL via `<>` / `!=` (`col <> NULL`, `col != NULL`):
+ *    em SQL essa comparacao e SEMPRE UNKNOWN (nunca TRUE) — nao e um predicado
+ *    restritivo real e tipicamente indica erro de logica do operador;
  *  - o WHERE tem qualquer forma que o guard NAO consegue provar ser um
  *    predicado coluna-vs-literal restritivo (ex.: `NOT false`).
  *

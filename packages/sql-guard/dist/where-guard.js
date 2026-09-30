@@ -26,7 +26,17 @@ const { Parser } = pkg;
  *  - nao ha clausula WHERE;
  *  - o WHERE e tautologico (`1=1`, `true`, `'a'='a'`, `1`, `col = col`, ...);
  *  - o WHERE contem QUALQUER `OR` (rejeitado categoricamente — OR sempre
- *    alarga o conjunto e ramos complementares cobrem todas as linhas);
+ *    alarga o conjunto e ramos complementares cobrem todas as linhas, ex.:
+ *    `col IS NOT NULL OR col IS NULL` cobre todas as linhas);
+ *  - o WHERE usa `LIKE` / `ILIKE` POSITIVO com padrao so-`%` (`LIKE '%'`,
+ *    `LIKE '%%'`) — always-true para qualquer string nao-NULL. `LIKE '_'`,
+ *    `LIKE '%_%'` e padroes com ESCAPE NAO sao bloqueados (restritivos);
+ *  - o WHERE usa operador NEGATIVO/de-exclusao (`!=`, `<>`, `IS NOT`,
+ *    `NOT IN`, `NOT LIKE`, `NOT ILIKE`, `NOT BETWEEN`) — casa ~todas as
+ *    linhas, nao prova restricao (bug_2c3ab1e7);
+ *  - o WHERE compara com NULL via `<>` / `!=` (`col <> NULL`, `col != NULL`):
+ *    em SQL essa comparacao e SEMPRE UNKNOWN (nunca TRUE) — nao e um predicado
+ *    restritivo real e tipicamente indica erro de logica do operador;
  *  - o WHERE tem qualquer forma que o guard NAO consegue provar ser um
  *    predicado coluna-vs-literal restritivo (ex.: `NOT false`).
  *
@@ -103,9 +113,10 @@ export function assertNonTrivialWhere(sql, dialect = 'postgresql') {
  *    Break-glass quase nunca precisa de OR; quem precisa de varios valores usa
  *    `IN (...)` (operador distinto, nao um no OR — logo nao afetado) ou roda
  *    statements separados auditados;
- *  - comparacao folha (`=`, `<>`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `IS`,
- *    `IS NOT`, `LIKE`, `NOT LIKE`, `BETWEEN`, ...): restritiva se um lado for
- *    coluna e o outro literal/placeholder, EXCETO `col = col` (tautologia).
+ *  - comparacao folha POSITIVA (`=`, `>`, `>=`, `<`, `<=`, `IN`, `IS`,
+ *    `LIKE`, `ILIKE`, `BETWEEN`): restritiva se um lado for coluna e o outro
+ *    literal/placeholder, EXCETO `col = col` (tautologia). Operadores
+ *    negativos (`<>`, `!=`, `IS NOT`, `NOT ...`) nunca contam (bug_2c3ab1e7).
  *
  * Conservador por design (fail-closed): qualquer forma nao reconhecida —
  * `unary_expr` (`NOT ...`), funcoes soltas, comparacao coluna-vs-coluna,
@@ -128,7 +139,14 @@ function isProvablyRestrictive(node) {
         const op = String(n['operator'] ?? '').toUpperCase();
         const left = n['left'];
         const right = n['right'];
-        // AND: basta UM ramo restritivo (o AND so estreita o conjunto)
+        // AND: basta UM ramo restritivo (o AND so estreita o conjunto).
+        // NOTA DE MANUTENCAO (nao e bypass): se um ramo for um OR, esse ramo
+        // recursa em isProvablyRestrictive e o `op === 'OR'` abaixo devolve
+        // `false` para ele — entao `A AND (B OR C)` so passa quando A (o ramo
+        // NAO-OR) e provadamente restritivo. O AND so pode ESTREITAR o conjunto
+        // do ramo restritivo: `id = 5 AND (qualquer coisa)` nunca atinge mais que
+        // as linhas com id = 5. Logo basta um ramo provado restritivo; o OR
+        // aninhado nao reabre o conjunto.
         if (op === 'AND') {
             return (isProvablyRestrictive(left) || isProvablyRestrictive(right));
         }
@@ -156,6 +174,18 @@ function isProvablyRestrictive(node) {
  * inclusive identicas) NAO e restritivo — `col = col` e uma tautologia
  * (sempre verdadeira para linhas onde a coluna nao e NULL), e mesmo
  * `colA = colB` nao e um predicado coluna-vs-literal.
+ *
+ * Exclusoes de tautologia (RC-F hardening):
+ *  - `col <> NULL` / `col != NULL`: em SQL a comparacao de qualquer valor com
+ *    NULL via <>/!= retorna UNKNOWN (nunca TRUE). Fail-closed: nao podemos
+ *    provar que e restritivo (nenhuma linha e afetada, mas por razao errada).
+ *    (Hoje ja coberto por NON_RESTRICTIVE_OPS, que rejeita todo `<>`/`!=`.)
+ *  - `col LIKE '%'` / `col ILIKE '%%'`: padrao composto SO de `%` corresponde
+ *    a QUALQUER string nao-NULL — always-true. Recusado. (`NOT LIKE` e
+ *    rejeitado antes, por ser negativo — bug_2c3ab1e7.)
+ *    `_` casa exatamente 1 char e `%_%` exige >=1 char — ambos
+ *    restritivos, NAO bloqueados. Com clausula ESCAPE o `%` pode ser literal,
+ *    entao a presenca de ESCAPE pula o bloqueio (conservador, anti-FP).
  */
 function isColumnVsValuePredicate(op, left, right) {
     // operadores de comparacao/predicado conhecidos
@@ -185,7 +215,8 @@ function isColumnVsValuePredicate(op, left, right) {
     // `col IS NOT NULL` (classico), `col != x`, `col <> x`, `NOT IN/LIKE/BETWEEN`
     // passavam como restritivos e furavam a guarda. Break-glass deve usar
     // predicado POSITIVO que estreita (`= x`, `IN (...)`, `> x`, `IS NULL`,
-    // `LIKE 'prefixo%'`).
+    // `LIKE 'prefixo%'`). Este bloco (fb6d031) foi perdido num merge de julho e
+    // restaurado em 2026-09-30 — e o comportamento publicado desde a 0.1.7.
     const NON_RESTRICTIVE_OPS = new Set([
         '!=',
         '<>',
@@ -197,44 +228,32 @@ function isColumnVsValuePredicate(op, left, right) {
     ]);
     if (NON_RESTRICTIVE_OPS.has(op))
         return false;
+    // RC-F: col <> NULL / col != NULL — em SQL essa comparacao e SEMPRE UNKNOWN
+    // (nunca TRUE). Fail-closed: nao e um predicado restritivo real. Redundante
+    // com NON_RESTRICTIVE_OPS acima; mantido como defesa se aquela lista mudar.
+    if ((op === '<>' || op === '!=') &&
+        (isNullLiteralNode(left) || isNullLiteralNode(right))) {
+        return false;
+    }
+    // RC-F: LIKE/ILIKE POSITIVO com padrao so-`%` — corresponde a qualquer
+    // string nao-NULL, tornando o predicado always-true. Recusar fail-closed.
+    // So o LIKE/ILIKE POSITIVO e tautologico: `NOT LIKE '%'` e o oposto
+    // (corresponde a NENHUMA string nao-NULL) — restritivo, nao bloqueado aqui.
+    if ((op === 'LIKE' || op === 'ILIKE') &&
+        (isAlwaysTrueLikePattern(left) || isAlwaysTrueLikePattern(right))) {
+        return false;
+    }
     const leftIsCol = isColumnRef(left);
     const rightIsCol = isColumnRef(right);
     const leftIsVal = isValueOperand(left);
     const rightIsVal = isValueOperand(right);
     // exatamente um lado coluna, o outro um valor (literal/placeholder/lista)
-    const colVsVal = (leftIsCol && rightIsVal) || (rightIsCol && leftIsVal);
-    if (!colVsVal) {
-        // col = col, col vs funcao, valor vs valor: nao e predicado restritivo
-        return false;
-    }
-    // LIKE/ILIKE com padrao SO-curinga (`%`, `%%`, ...) casa TODAS as linhas
-    // nao-NULL -> tautologia. Padrao com conteudo (`abc%`, `%abc%`) estreita.
-    if (op === 'LIKE' || op === 'ILIKE') {
-        const pattern = stringLiteralValue(leftIsCol ? right : left);
-        if (pattern !== null && /^%+$/.test(pattern))
-            return false;
-    }
-    return true;
-}
-/**
- * Extrai o valor de string de um no literal (single/double quote string),
- * desembrulhando `expr`. Retorna `null` se nao for um literal de string —
- * placeholders/numeros/listas nao tem padrao de curinga a inspecionar.
- */
-function stringLiteralValue(node) {
-    if (node == null || typeof node !== 'object')
-        return null;
-    const n = node;
-    if (n['type'] === 'expr' && 'expr' in n)
-        return stringLiteralValue(n['expr']);
-    const type = typeof n['type'] === 'string' ? n['type'].toLowerCase() : '';
-    if ((type === 'single_quote_string' ||
-        type === 'string' ||
-        type === 'double_quote_string') &&
-        typeof n['value'] === 'string') {
-        return n['value'];
-    }
-    return null;
+    if (leftIsCol && rightIsVal)
+        return true;
+    if (rightIsCol && leftIsVal)
+        return true;
+    // col = col, col vs funcao, valor vs valor: nao e predicado restritivo
+    return false;
 }
 /**
  * `true` se o no e uma referencia de coluna do node-sql-parser.
@@ -284,6 +303,56 @@ function isValueOperand(node) {
             return value.every((item) => isValueOperand(item));
         }
         return false;
+    }
+    return false;
+}
+// ---------------------------------------------------------------------------
+// Helpers de tautologia (RC-F hardening)
+// ---------------------------------------------------------------------------
+/**
+ * `true` se o no e um literal NULL do AST (`{ type: 'null', value: null }`).
+ *
+ * Usado para detectar `col <> NULL` / `col != NULL` — comparacoes que em SQL
+ * retornam sempre UNKNOWN (nunca TRUE), portanto nao sao predicados
+ * restritivos reais.
+ */
+function isNullLiteralNode(node) {
+    if (node == null || typeof node !== 'object')
+        return false;
+    const n = node;
+    return typeof n['type'] === 'string' && n['type'].toLowerCase() === 'null';
+}
+/**
+ * `true` se o no e uma string de padrao LIKE/ILIKE que e always-true: composta
+ * EXCLUSIVAMENTE por um ou mais `%` (zero-ou-mais-chars), correspondendo a
+ * QUALQUER string nao-NULL.
+ *
+ * So `%` torna o padrao always-true. `_` casa EXATAMENTE 1 char (restritivo:
+ * exclui a string vazia e qualquer string com len != 1) e `%_%` exige PELO
+ * MENOS 1 char (exclui a string vazia) — ambos sao predicados restritivos
+ * reais, logo NAO sao always-true.
+ *
+ * ESCAPE: se o no de padrao carrega uma clausula `escape` (`LIKE '%%' ESCAPE
+ * '%'`), o `%` pode estar escapado para virar literal — nao da pra provar que
+ * e wildcard. Conservador/anti-FP: presenca de ESCAPE pula o bloqueio.
+ *
+ * Exemplos bloqueados: `'%'`, `'%%'`, `'%%%'`.
+ * Exemplos aceitos: `'_'`, `'%_%'`, `'a%'`, `'%texto%'`, `'%%' ESCAPE '%'`.
+ */
+function isAlwaysTrueLikePattern(node) {
+    if (node == null || typeof node !== 'object')
+        return false;
+    const n = node;
+    const type = typeof n['type'] === 'string' ? n['type'].toLowerCase() : '';
+    if (type === 'single_quote_string' ||
+        type === 'string' ||
+        type === 'double_quote_string') {
+        // clausula ESCAPE presente -> `%` pode ser literal -> nao bloquear.
+        if (n['escape'] != null)
+            return false;
+        const val = typeof n['value'] === 'string' ? n['value'] : '';
+        // padrao nao-vazio composto SOMENTE de `%` = always-true.
+        return val.length > 0 && /^%+$/.test(val);
     }
     return false;
 }

@@ -341,13 +341,6 @@ describe('assertNonTrivialWhere — lanca (RC-F: <> NULL / != NULL sempre UNKNOW
 describe('assertNonTrivialWhere — passa (RC-F: anti-falso-positivo)', () => {
   // Garantia: os novos checks NAO bloqueiam queries legitimas.
 
-  it('DELETE com col IS NOT NULL passa (filtro real em coluna nullable)', () => {
-    // IS NOT NULL sozinho permanece aceito — filtra linhas com email preenchido.
-    expect(() =>
-      assertNonTrivialWhere('DELETE FROM users WHERE email IS NOT NULL'),
-    ).not.toThrow();
-  });
-
   it('DELETE com col IS NOT NULL AND id = 5 passa (AND com predicado real)', () => {
     expect(() =>
       assertNonTrivialWhere(
@@ -394,19 +387,6 @@ describe('assertNonTrivialWhere — passa (RC-F: anti-falso-positivo)', () => {
     ).not.toThrow();
   });
 
-  it("UPDATE com NOT LIKE '_' passa (negacao e RESTRITIVA, nao tautologica)", () => {
-    // FP-1: NOT LIKE e o oposto do always-true -> nunca deve ser bloqueado.
-    expect(() =>
-      assertNonTrivialWhere("UPDATE users SET x = 1 WHERE name NOT LIKE '_'"),
-    ).not.toThrow();
-  });
-
-  it("UPDATE com NOT LIKE '%' passa (negacao de always-true = restritivo)", () => {
-    expect(() =>
-      assertNonTrivialWhere("UPDATE users SET x = 1 WHERE name NOT LIKE '%'"),
-    ).not.toThrow();
-  });
-
   it("DELETE com LIKE '%%' ESCAPE '%' passa (ESCAPE torna % literal)", () => {
     // FP-3: com ESCAPE o `%` pode ser literal -> nao da pra provar wildcard ->
     // conservador, pula o bloqueio (restritivo na pratica: casa a string '%').
@@ -415,16 +395,21 @@ describe('assertNonTrivialWhere — passa (RC-F: anti-falso-positivo)', () => {
     ).not.toThrow();
   });
 
-  it("UPDATE com col <> 'some_value' passa (nao e NULL)", () => {
-    expect(() =>
-      assertNonTrivialWhere("UPDATE users SET x = 1 WHERE status <> 'active'"),
-    ).not.toThrow();
-  });
+});
 
-  it('DELETE com col != 5 passa (nao e NULL, comparacao com numero)', () => {
-    expect(() =>
-      assertNonTrivialWhere('DELETE FROM users WHERE age != 18'),
-    ).not.toThrow();
+// bug_2c3ab1e7 (restaurado 2026-09-30): a linha RC-F tratava estes negativos
+// como anti-falso-positivo e o merge de julho manteve os dois conjuntos de
+// teste contraditorios. Vale o comportamento publicado desde a 0.1.7:
+// operador negativo/de-exclusao NAO prova restricao pro break-glass.
+describe('assertNonTrivialWhere — lanca (negativos nao provam restricao)', () => {
+  it.each([
+    'DELETE FROM users WHERE email IS NOT NULL',
+    "UPDATE users SET x = 1 WHERE name NOT LIKE '_'",
+    "UPDATE users SET x = 1 WHERE name NOT LIKE '%'",
+    "UPDATE users SET x = 1 WHERE status <> 'active'",
+    'DELETE FROM users WHERE age != 18',
+  ])('%s lanca', (sql) => {
+    expect(() => assertNonTrivialWhere(sql)).toThrow();
   });
 });
 
