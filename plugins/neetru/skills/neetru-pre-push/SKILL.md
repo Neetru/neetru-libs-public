@@ -43,10 +43,17 @@ O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored
    mkdir -p .githooks
    printf '#!/usr/bin/env sh\nexec node "$(dirname "$0")/../scripts/pre-push-gate.mjs" "$@"\n' > .githooks/pre-push
    git update-index --add --chmod=+x .githooks/pre-push   # Windows não guarda +x sozinho
+   printf '.githooks/* text eol=lf\n' >> .gitattributes     # hook sempre com LF
    git config core.hooksPath .githooks
    ```
-   E no `package.json`: `"prepare": "git config core.hooksPath .githooks || true"` — quem clona e roda `npm install` já sai com o gate ligado. (Repo que já usa **husky**: ponha a linha `exec node …` no `.husky/pre-push`; não troque o mecanismo.)
-3. Teste: `node scripts/pre-push-gate.mjs --plan` e um push de branch real.
+   - **`.gitattributes` com `.githooks/* text eol=lf` é obrigatório:** em máquina com `core.autocrlf=true` (padrão do Git no Windows) o checkout grava o hook com CRLF, o shebang vira `sh\r` e o hook quebra.
+   - No `package.json`, o `prepare` liga o gate pra quem clona e roda `npm install`. Use a forma **portátil** — só age se existir `.git` (arquivo ou pasta, então funciona em worktree) e nunca falha:
+     ```json
+     "prepare": "node -e \"try{if(require('fs').existsSync('.git'))require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'],{stdio:'ignore'})}catch{}\""
+     ```
+     **Não** use `git config core.hooksPath .githooks || true`: no Windows o npm roda o script no `cmd.exe`, onde `true` não existe — se o `git config` falhar (ex.: pasta sem `.git`), o `|| true` vira erro e quebra o `npm install`.
+   - Repo que já usa **husky**: ponha a linha `exec node …` no `.husky/pre-push`; não troque o mecanismo.
+3. Teste: `node scripts/pre-push-gate.mjs --plan < /dev/null` (o gate lê o stdin antes de olhar a flag; sem o redirecionamento, num shell não interativo ele fica esperando) e um push de branch real.
 4. Documente no `CLAUDE.md`/`AGENTS.md` do repo (seção "Gate de pre-push" — modelo na skill `neetru-produto-md`).
 
 ## Gate vermelho — diagnosticar antes de pular
