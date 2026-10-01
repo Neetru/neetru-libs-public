@@ -11,6 +11,8 @@
  *   - push direto pra main/master: BLOQUEADO (fluxo branch -> PR -> merge)
  *   - push só de remoção de ref: não valida nada
  *   - etapas abortam na primeira falha; nada é enviado
+ *   - etapas rodam SEM as variáveis de repositório que o git exporta pro hook
+ *     (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE...) — ver sanitizeGitEnv
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
@@ -34,6 +36,50 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROTECTED_BRANCHES = ['refs/heads/main', 'refs/heads/master'];
+
+/**
+ * Variáveis "de repositório" que o git exporta para hooks (githooks(5): "GIT_DIR,
+ * GIT_WORK_TREE, etc., are exported so that Git commands run by the hook can
+ * correctly locate the repository"). Num worktree o pre-push recebe
+ * GIT_DIR=<repo>/.git/worktrees/<nome>. Herdadas pelas etapas, fazem QUALQUER git
+ * rodado por elas — ex.: teste que cria repo em tmpdir com `git init`/`git config`/
+ * `git commit` — operar no repo do push (incidente 2026-10-01: core.bare=true,
+ * user.name de teste e commit "init" no clone real). Lista = `git rev-parse
+ * --local-env-vars` (git 2.53) + GIT_NAMESPACE + GIT_QUARANTINE_PATH; os pares
+ * GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> saem junto com GIT_CONFIG_COUNT.
+ * Transporte/credencial (GIT_SSH, GIT_SSH_COMMAND, GIT_ASKPASS,
+ * GIT_TERMINAL_PROMPT...) NÃO são de repositório e ficam.
+ */
+export const GIT_REPO_ENV_VARS = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_CONFIG',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_DIR',
+  'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_NAMESPACE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_PREFIX',
+  'GIT_QUARANTINE_PATH',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_SHALLOW_FILE',
+  'GIT_WORK_TREE',
+];
+
+/** Cópia de `env` sem as variáveis de repositório do git (pura; nomes sem distinção de caixa, como no Windows). */
+export function sanitizeGitEnv(env = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    const k = key.toUpperCase();
+    if (GIT_REPO_ENV_VARS.includes(k) || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k)) continue;
+    out[key] = value;
+  }
+  return out;
+}
 
 export function parsePushLines(text) {
   return String(text ?? '')
@@ -93,13 +139,13 @@ export function planSteps({ pkg, hasTsconfig, hasGoMod, flags }) {
   return steps;
 }
 
-function run({ name, cmd, args }, cwd) {
+function run({ name, cmd, args }, cwd, env = process.env) {
   return new Promise((resolve) => {
     const start = Date.now();
     process.stdout.write(`\n[pre-push] -> ${name}\n`);
     // shell:true é necessário no Windows (npm.cmd/npx.cmd); args são nomes de
-    // script/flags fixos, sem input do usuário.
-    const child = spawn([cmd, ...args].join(' '), { cwd, stdio: 'inherit', shell: true });
+    // script/flags fixos, sem input do usuário. env sem GIT_DIR & cia (ver sanitizeGitEnv).
+    const child = spawn([cmd, ...args].join(' '), { cwd, stdio: 'inherit', shell: true, env: sanitizeGitEnv(env) });
     child.on('error', () => resolve({ ok: false, ms: Date.now() - start }));
     child.on('exit', (code) => resolve({ ok: code === 0, ms: Date.now() - start }));
   });
@@ -152,7 +198,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
       process.stderr.write(`[pre-push] FALHOU ${step.name}: ${step.error}\n`);
       return 1;
     }
-    const r = await run(step, cwd);
+    const r = await run(step, cwd, env);
     done.push(`${step.name} ${(r.ms / 1000).toFixed(1)}s`);
     if (!r.ok) {
       process.stderr.write(`\n[pre-push] ABORTADO em "${step.name}". Nada foi enviado.\n`);
