@@ -10,6 +10,7 @@
  */
 import pkg from 'node-sql-parser';
 import { findDangerousFunctions, findDataModifyingNode } from './ast.js';
+import { detectRawLexerHazard } from './raw-guard.js';
 const { Parser } = pkg;
 /**
  * Tipos de statement do AST que sao read-only puros.
@@ -145,6 +146,16 @@ export function classifyStatement(sql, dialect = 'postgresql') {
     // nunca precisa de `\'`/`\"` (aspa dentro de string = `''`). Checado no RAW.
     if (trimmed.includes("\\'") || trimmed.includes('\\"')) {
         return unsafe('unknown', "SQL contem barra antes de aspa (\\' ou \\\"), que o parser e o banco interpretam de forma diferente — recusado por seguranca (fail-closed). Aspa simples dentro de string: use ''. JSON com aspa escapada: monte com jsonb_build_object(...). String terminando em barra: concatene chr(92).");
+    }
+    // ---- divergencias de lexer no RAW (CR/controle, dollar-quote) ---------
+    // Mesma familia do `\'` acima (bug_4eb8f07d) — bug_0aea20a4. O comentario de
+    // linha `--` do Postgres fecha em CR (`\r`), o parser so no `\n`; e o parser
+    // desalinha dollar-quote de tag nao-ASCII (`$é$`). Em ambos o guard ve um
+    // SELECT seguro enquanto o banco executa codigo escondido. Checado no RAW
+    // (antes do parse), pois o ataque vive no texto cru.
+    const rawHazard = detectRawLexerHazard(trimmed);
+    if (rawHazard) {
+        return unsafe('unknown', rawHazard);
     }
     // ---- fallbacks por palavra-chave (parser nao cobre no dialeto pg) ----
     const kw = keywordPrefix(trimmed);
