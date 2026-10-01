@@ -1,0 +1,3 @@
+# Hooks de git rodam pelo sh: com core.autocrlf=true (Windows) o checkout
+# grava CRLF e o shebang vira "sh<CR>", quebrando o hook. Força LF.
+.githooks/* text eol=lf
