@@ -1,6 +1,6 @@
 {
   "name": "@neetru/sql-guard",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Classificador read-only de SQL + gate de hardening do Neetru Core DB. Decide se um statement é seguro para o visualizador de banco, impõe LIMIT em SELECTs e barra break-glass com WHERE tautológico. Fail-closed.",
   "license": "MIT",
   "type": "module",

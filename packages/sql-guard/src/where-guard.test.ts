@@ -463,3 +463,40 @@ describe('assertNonTrivialWhere — determinismo', () => {
     expect(run).toThrow();
   });
 });
+
+// bug_0aea20a4: no break-glass, `UPDATE t SET a=1 --x\r, b=2 WHERE id=5` esconde
+// o 2o SET (e ate o WHERE) do guard, mas o PG fecha o comentario no CR e executa
+// tudo. Recusado no texto cru (mesmo padrao do `\'`).
+describe('assertNonTrivialWhere — divergencia de lexer no raw (bug_0aea20a4)', () => {
+  const CR = String.fromCharCode(13);
+  const NUL = String.fromCharCode(0);
+  const E = '\u00e9';
+
+  it('lanca em comentario fechado por CR escondendo SET', () => {
+    expect(() =>
+      assertNonTrivialWhere(`UPDATE t SET a = 1 --x${CR}, b = 2 WHERE id = 5`),
+    ).toThrow(/retorno de carro|CR/);
+  });
+  it('lanca em caractere de controle (NUL)', () => {
+    expect(() =>
+      assertNonTrivialWhere(`UPDATE t SET a = 1${NUL} WHERE id = 5`),
+    ).toThrow(/controle|retorno de carro/);
+  });
+  it('lanca em dollar-quote de tag nao-ASCII', () => {
+    expect(() =>
+      assertNonTrivialWhere(`UPDATE t SET a = $${E}$x$${E}$ WHERE id = 5`),
+    ).toThrow(/dollar-quote/);
+  });
+
+  // anti-falso-positivo
+  it('aceita UPDATE restritivo multi-linha com \n e \t', () => {
+    expect(() =>
+      assertNonTrivialWhere('UPDATE t\n\tSET a = 1\nWHERE id = 5'),
+    ).not.toThrow();
+  });
+  it('aceita dollar-quote de tag ASCII no SET', () => {
+    expect(() =>
+      assertNonTrivialWhere('UPDATE t SET a = $tag$x$tag$ WHERE id = 5'),
+    ).not.toThrow();
+  });
+});

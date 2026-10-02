@@ -16,6 +16,7 @@
 
 import pkg from 'node-sql-parser';
 import type { Dialect } from './classify.js';
+import { detectRawLexerHazard } from './raw-guard.js';
 
 const { Parser } = pkg;
 
@@ -78,6 +79,15 @@ export function assertNonTrivialWhere(
     throw new Error(
       "assertNonTrivialWhere: barra antes de aspa (\\' ou \\\") e ambigua entre o parser e o banco — recusado (fail-closed). Aspa simples dentro de string: use ''. JSON com aspa escapada: monte com jsonb_build_object(...). String terminando em barra: concatene chr(92).",
     );
+  }
+
+  // Divergencias de lexer no RAW (CR/controle, dollar-quote de tag nao-ASCII) —
+  // bug_0aea20a4. `UPDATE t SET a=1 --x\r, b=2 WHERE id=5` esconde o 2o SET (e
+  // ate o proprio WHERE) do guard, mas o Postgres fecha o comentario no CR e
+  // executa tudo. Recusado no texto cru, mesmo padrao do `\'` acima.
+  const rawHazard = detectRawLexerHazard(sql);
+  if (rawHazard) {
+    throw new Error('assertNonTrivialWhere: ' + rawHazard);
   }
 
   const parser = new Parser();

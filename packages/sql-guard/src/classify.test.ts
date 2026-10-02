@@ -300,3 +300,61 @@ describe('classifyStatement — barra antes de aspa (fail-closed)', () => {
     expect(classifyStatement(`SELECT * FROM files WHERE path = 'C:${B}dir${B}a.txt'`).safe).toBe(true);
   });
 });
+
+// bug_0aea20a4 (HIGH, reproduzido em Postgres real / PGlite): divergencia de
+// lexer entre node-sql-parser e Postgres no TEXTO CRU. Mesma familia do `\'`.
+//  - CR (\r) fecha comentario `--` no PG (scan.l: [\n\r]) mas nao no parser
+//    (`--[^\n]*`) -> `SELECT 1 --x\r, pg_advisory_lock(8)` passa como SELECT
+//    seguro e o PG executa o lock escondido.
+//  - tag de dollar-quote nao-ASCII (`$é$`) desalinha o fim da string no parser.
+describe('classifyStatement — divergencia de lexer no raw (bug_0aea20a4)', () => {
+  const CR = String.fromCharCode(13); // \r
+  const NUL = String.fromCharCode(0);
+  const VT = String.fromCharCode(11);
+  const FF = String.fromCharCode(12);
+  const E = '\u00e9'; // é
+
+  it('recusa comentario de linha fechado por CR escondendo codigo', () => {
+    const v = classifyStatement(`SELECT 1 --x${CR}, pg_advisory_lock(8)`);
+    expect(v.safe).toBe(false);
+    expect(v.reason).toMatch(/retorno de carro|CR/);
+  });
+
+  it.each([
+    ['NUL', `SELECT 1${NUL}`],
+    ['VT', `SELECT 1 --x${VT}, pg_advisory_lock(8)`],
+    ['FF', `SELECT 1 --x${FF}, pg_advisory_lock(8)`],
+    ['CR no meio', `SELECT${CR}1`],
+  ])('recusa caractere de controle (%s)', (_n, sql) => {
+    const v = classifyStatement(sql);
+    expect(v.safe).toBe(false);
+    expect(v.reason).toMatch(/controle|retorno de carro/);
+  });
+
+  it.each([
+    `SELECT $${E}$x$${E}$ AS z`,
+    `SELECT $${E}$a$$b$${E}$ AS z, pg_advisory_lock(202)`,
+    `SELECT $a${E}$y$a${E}$ AS z, pg_advisory_lock(205)`,
+  ])('recusa dollar-quote de tag nao-ASCII: %s', (sql) => {
+    const v = classifyStatement(sql);
+    expect(v.safe).toBe(false);
+    expect(v.reason).toMatch(/dollar-quote/);
+  });
+
+  // anti-falso-positivo: o que e legitimo continua aceito
+  it('aceita \n (nova linha) e \t (tab) como whitespace legitimo', () => {
+    expect(classifyStatement("SELECT id\n\tFROM users\nWHERE status = 'x'").safe).toBe(true);
+  });
+  it('aceita comentario -- terminado por \n normal', () => {
+    expect(classifyStatement('SELECT 1 --comentario\nFROM users').safe).toBe(true);
+  });
+  it('aceita dollar-quote de tag ASCII ($tag$)', () => {
+    expect(classifyStatement('SELECT $tag$texto$tag$ AS z').safe).toBe(true);
+  });
+  it('aceita dollar-quote de tag vazia ($$...$$)', () => {
+    expect(classifyStatement('SELECT $$texto$$ AS z').safe).toBe(true);
+  });
+  it('NAO confunde parametros posicionais ($1 ... $2) com dollar-quote', () => {
+    expect(classifyStatement('SELECT * FROM t WHERE a > $1 AND b < $2').safe).toBe(true);
+  });
+});
