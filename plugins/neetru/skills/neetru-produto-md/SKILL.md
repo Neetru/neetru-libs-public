@@ -35,7 +35,7 @@ Três faixas. O produto-Claude precisa saber em qual está antes de agir.
 - **O pre-push local É o CI** (Actions sem billing) → o repo precisa do gate ligado e o `.md` diz como rodar/pular. Se o produto ainda não tem, **adote junto** com a geração do arquivo (skill `neetru-pre-push`).
 
 ## Ponteiros pras skills neetru-* (roteador a embutir)
-Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`** · chat dev → **`neetru-chat`** · regras vivas → **`neetru-regras`** · deploy prod → **`neetru-deploy`** · migração de schema → **`neetru-migrations`** · erro de `@neetru/sdk` → **`neetru-sdk-troubleshooting`** · "merged ≠ live" → **`neetru-release-gates`** · gate de push/CI local → **`neetru-pre-push`** · "é meu bug ou do Core?" → **`neetru-troubleshooting`** · sintaxe de CLI/SDK → **`neetru`**. Instalar/atualizar: `neetru marketplace skills install` (NÃO existe `neetru skills install`).
+Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`** · chat dev → **`neetru-chat`** · regras vivas → **`neetru-regras`** · deploy prod → **`neetru-deploy`** · migração de schema → **`neetru-migrations`** · erro de `@neetru/sdk` → **`neetru-sdk-troubleshooting`** · "merged ≠ live" → **`neetru-release-gates`** · gate de push/CI local → **`neetru-pre-push`** · "é meu bug ou do Core?" → **`neetru-troubleshooting`** · sintaxe de CLI/SDK → **`neetru`**. Instalar/atualizar: `neetru archive skills install` (NÃO existe `neetru skills install`).
 
 ## Como GERAR / ATUALIZAR o arquivo
 1. **Descubra o produto** — nome, slug, stack (Next.js / Node API), target de deploy (workspace|vm), major do SDK que ele pina. Confirme versões reais (`npm view @neetru/sdk version`, `neetru --version`) e regras vivas via `neetru-docs`/`neetru-regras` antes de escrever — **não pine número fixo que envelhece**; use header "last verified: <data>".
@@ -48,7 +48,7 @@ Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`*
 ```markdown
 # <PRODUTO> — CLAUDE.md (produto SaaS Neetru)
 
-> Produto do ecossistema Neetru. As skills **neetru-*** (via `neetru marketplace skills install`)
+> Produto do ecossistema Neetru. As skills **neetru-*** (via `neetru archive skills install`)
 > carregam as regras vivas do owner que NÃO moram neste repo. Precedência:
 > **owner-decision > este arquivo > memória**; **CÓDIGO / `neetru-docs` vence doc velho**.
 > _last verified: <AAAA-MM-DD> — CLI <faixa> · SDK <faixa> · Core CalVer <faixa>._
@@ -99,7 +99,7 @@ Dev local: `NEETRU_ENV=dev` (mocks). Dados fluem **só pelo SDK**.
 - Erro de `@neetru/sdk` → `neetru-sdk-troubleshooting` · "merged ≠ live" → `neetru-release-gates`
 - "é meu bug ou do Core?" → `neetru-troubleshooting` · comando CLI/SDK → `neetru`
 - Push barrado / montar o gate → `neetru-pre-push`
-- Instalar/atualizar skills: `neetru marketplace skills install`
+- Instalar/atualizar skills: `neetru archive skills install`
 
 ## Antes de declarar pronto
 Gate de pre-push verde (FULL antes do merge; sem skip não-declarado) · `tsc`/build/testes verdes · deploy `resolved` só após LIVE + smoke (`/api/health` 200, `neetru status`, `neetru logs`) · ground-truth (só o que verifiquei) · zero segredo no chat/arquivo.

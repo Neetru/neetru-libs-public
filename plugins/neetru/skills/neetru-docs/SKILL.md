@@ -38,7 +38,7 @@ Vivem em `docs/_review/` (Suporte; product-facing, publicáveis no docs control 
 - `devex/sdk-reference/auth.md` — 2.x; **omite todo o fluxo PKCE** (`handleRedirectCallback`/`getIdToken`/`verifyToken`) e descreve `signIn` errado. SDK real = **3.1.9**.
 - `devex/GUIA_SDK_2_0.md` + `devex/sdk-reference/db.md` + `devex/INDEX.md` — chamam `initNeetru` de "stub" (**REMOVIDO no 3.0** → use `createNeetruClient`), listam `usage.track`/`getQuota` (**removidos** → `usage.report`/`check`), dizem "SDK 1.0 / 7 namespaces" (real: **10**).
 - `saas-do-zero/06-monitoramento.md` (usa `usage.track`), `09-troubleshooting.md` + `03-criando-produto.md` (citam `initNeetru`) — quebram o build do consumer.
-- `devex/cli-reference/marketplace.md` (comando virou **`neetru archive`** em 2.10.0), `products-db.md` (virou **`neetru admin database`**), `GUIA_CLI_2_x.md` (**`neetru fn deploy`** foi deletado; **`neetru changelog`** não existe).
+- `devex/cli-reference/marketplace.md` (comando virou **`neetru archive`** em 2.10.0; página arquivada em `docs/_archive/sistema/manuais/devex/cli-reference/` em 2026-09-29), `products-db.md` (virou **`neetru admin database`**), `GUIA_CLI_2_x.md` (**`neetru fn deploy`** foi deletado; **`neetru changelog`** não existe).
 - `infra/AGENT_HANDLERS.md` — "Agent v1.0 / 5 handlers" e ponteiro SSoT quebrado; a frota real roda ~28 handlers (1.6.x).
 - `docs/index.md` + `INDEX_MESTRE.md` — revision/versões congelados em maio.
 

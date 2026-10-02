@@ -1,0 +1,20 @@
+{
+  "name": "neetru-libs-public",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Loja pública Neetru: skills do Claude Code (plugins/) e libs @neetru/* (packages/, cada uma com package.json e lockfile próprios). Este package.json da raiz NÃO é workspace — só liga o gate de pre-push.",
+  "scripts": {
+    "typecheck": "node scripts/packages-run.mjs typecheck",
+    "test": "node scripts/packages-run.mjs test",
+    "prepare": "node -e \"try{if(require('fs').existsSync('.git'))require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'],{stdio:'ignore'})}catch{}\""
+  },
+  "neetru": {
+    "prePush": [
+      "typecheck",
+      "test"
+    ]
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

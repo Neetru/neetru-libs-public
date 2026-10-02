@@ -1,6 +1,7 @@
 {
   "name": "@neetru/schema-reconcile",
   "version": "0.1.0",
+  "private": true,
   "description": "Reconciliacao aditiva de schema do Neetru Core DB. Parseia CREATE TABLE de uma migracao e, contra as colunas vivas introspectadas, planeja os ALTER TABLE ADD COLUMN que o CREATE TABLE IF NOT EXISTS no-op'ou numa tabela existente. Fonte unica compartilhada Core (Cloud SQL) e agente (VM). Funcao pura, deterministica, aditiva-only, fail-safe, zero dependencias.",
   "license": "UNLICENSED",
   "type": "module",

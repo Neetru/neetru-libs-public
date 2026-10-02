@@ -14,7 +14,7 @@ neetru bootstrap                 # Node/gcloud/Docker/Firebase + ADC (idempotent
 neetru login                     # OAuth Device Code (RFC 8628); CI: --token nrt_<keyId>_<secret>
 neetru whoami                    # confirma identidade da chave
 neetru doctor                    # 5/5 verde: token CLI, core acessível, schema neetru.config.json, NEETRU_ENV, CLI version
-neetru marketplace skills install  # instala/atualiza as skills Neetru em ~/.claude/skills/
+neetru archive skills install      # instala/atualiza as skills Neetru em ~/.claude/skills/
 ```
 Não escreva código antes do `doctor` verde. (**Node 22 LTS** é pré-requisito do ambiente — `HANDOFF.md` —, não um check do `doctor`.)
 

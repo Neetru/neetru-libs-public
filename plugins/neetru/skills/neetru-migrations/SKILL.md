@@ -1,6 +1,6 @@
 ---
 name: neetru-migrations
-description: Use when an AI (Claude) building a Neetru product takes a DB schema change to PRODUCTION on its per-product database via `neetru db apply` / `neetru db migrations *` on a VM engine — and hits a migration failing `type "x" already exists` (already-applied/redundant hash, "ME1"), a destructive migration that pauses demanding `migrations confirm --mfa-token`, a backup that never reaches `completed`, or needs to see WHERE/WHY a migration stopped. Covers the additive-vs-destructive gate do `@neetru/db-classifier`, ME1 + DDL idempotente, `db migrations show/resolve`, reset de migração stale `applied`→`pending` em VM reprovisionada, e backup gated por release do agente — SEM reescrever o schema caçando um bug que é do motor do Core.
+description: Use when an AI (Claude) building a Neetru product takes a DB schema change to PRODUCTION on its per-product database via `neetru db apply` / `neetru db migrations *` on a VM engine — and hits a migration failing `type "x" already exists` (already-applied/redundant hash, "ME1"), a destructive migration that pauses demanding `migrations confirm --mfa-token` (or an active `neetru auth mfa-session`), a backup that never reaches `completed`, or needs to see WHERE/WHY a migration stopped. Covers the additive-vs-destructive gate do `@neetru/db-classifier`, ME1 + DDL idempotente, `db migrations show/resolve`, reset de migração stale `applied`→`pending` em VM reprovisionada, e backup gated por release do agente — SEM reescrever o schema caçando um bug que é do motor do Core.
 ---
 
 # neetru-migrations — schema do produto → produção, sem retrabalho
@@ -9,13 +9,14 @@ description: Use when an AI (Claude) building a Neetru product takes a DB schema
 
 ## Pipeline prod-safe
 1. `neetru db apply --dry-run` → lê o relatório do **`@neetru/db-classifier`** (`additive` vs `destructive`).
-2. **Aditiva** → aplica. **Destrutiva** → o pipeline **PAUSA** e exige `neetru db migrations confirm <id> --mfa-token=<TOTP>` (não tem como pular; DROP/ALTER COLUMN/TRUNCATE são detectados automaticamente).
+2. **Aditiva** → aplica. **Destrutiva** → o pipeline **PAUSA** e exige `neetru db migrations confirm <id> --mfa-token=<TOTP>` (ou uma sessão ativa de `neetru auth mfa-session`; desde a auditoria de UX 2026-09 a flag canônica é `--mfa-token` e `--mfa` ficou só como alias oculto; não tem como pular; DROP/ALTER COLUMN/TRUNCATE são detectados automaticamente).
 3. Em VM, roda via `agent.db.migrate` (comando no command-bus `servers/{id}/commands/{cid}`; Core não abre TCP no Postgres da VM sem Direct VPC Egress — owner-gated).
 
 ## 🔴 ME1 — migração REDUNDANTE `type "…" already exists`
-Acontece quando uma migração tem o **mesmo hash** de uma já `applied` (re-aplica schema idêntico). O motor de migração do Core **deveria pular hash já-aplicado** (no-op/superseded) — é melhoria conhecida do Core, **não bug do teu schema**.
-- **NÃO reescreva `schema.ts` caçando isso** — foi exatamente o retrabalho do incidente do pdv (schema intacto desde a migração anterior; o bug era do motor).
-- Mitigação no produto: **DDL idempotente** — `CREATE TABLE IF NOT EXISTS`; pra **tipos** (Postgres NÃO tem `CREATE TYPE IF NOT EXISTS`) use guard `DO $$ BEGIN CREATE TYPE … ; EXCEPTION WHEN duplicate_object THEN null; END $$;`.
+Acontece quando uma migração tem o **mesmo hash** de uma já `applied` (re-aplica schema idêntico). O motor de migração do Core **já pula hash já-aplicado** como no-op (dedup por hash "ME1" em `src/lib/actions/_db-migrations-deps.ts`, campo `redundantOfMigrationId`) — **não é bug do teu schema nem melhoria pendente**.
+- **NÃO reescreva `schema.ts` caçando isso.** E — igualmente importante — **NÃO reescreva o schema inteiro dentro de um `CREATE TABLE IF NOT EXISTS`**: isso é no-op silencioso em tabelas que já existem no Postgres (não adiciona colunas novas). Foi exatamente o retrabalho do incidente do pdv.
+- **Quando o dedup automático NÃO cobre:** se o `drizzle-kit` re-gerou o arquivo com diferença cosmética (hash novo mas DDL semanticamente idêntico), o dedup por hash não o reconhece como redundante. Nesse caso, use `neetru db migrations resolve <id>` (prova por hash) ou `--force --mfa-token` (atestação admin).
+- Mitigação no produto (edge case): **DDL idempotente incremental** — `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; pra **tipos** (Postgres NÃO tem `CREATE TYPE IF NOT EXISTS`) use guard `DO $$ BEGIN CREATE TYPE … ; EXCEPTION WHEN duplicate_object THEN null; END $$;`. **Nunca** reescreva o schema inteiro como `CREATE TABLE IF NOT EXISTS` — use migrações incrementais (`ALTER`).
 - Antes de re-aplicar: **junte evidência** (histórico + classifier + status anterior) e decida "é meu ou do motor?" (`neetru-troubleshooting`).
 
 ## `neetru db migrations show` / `resolve` (observabilidade — ME2)

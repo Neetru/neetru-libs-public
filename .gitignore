@@ -1,0 +1,9 @@
+# Dependências e caches locais — nunca versionar (1870 arquivos entraram por engano no 27e4fbb).
+node_modules/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# ATENÇÃO: dist/ NÃO é ignorado de propósito — o dist de cada pacote é
+# versionado junto com o src (todo fix atualiza os dois) e serve de base
+# pro diff "dist versionado vs dist publicado no npm" antes de cada publish.
