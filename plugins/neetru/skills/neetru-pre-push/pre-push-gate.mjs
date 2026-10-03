@@ -13,11 +13,15 @@
  *   - etapas abortam na primeira falha; nada é enviado
  *   - etapas rodam SEM as variáveis de repositório que o git exporta pro hook
  *     (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE...) — ver sanitizeGitEnv
+ *   - repo de PRODUTO (neetru.config.json) com docs/** alterado: etapa docs
+ *     (`neetru docs check --changed --offline`); sem a CLI >= 2.31.0, pula com aviso
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
  *              senão `npx tsc --noEmit` se existir tsconfig.json
  *   lint       script `lint` (se não foi usado como typecheck)
+ *   docs       `neetru docs check --changed --offline` — só em repo de produto
+ *              quando o push mexe em docs/** (protocolo de docs de produto §8.3)
  *   test       script `test`                  (pulado com NEETRU_PREPUSH_FAST=1)
  *   build      script `build`                 (só com NEETRU_PREPUSH_FULL=1)
  * Etapas (Go — go.mod na raiz): go vet ./... · go test ./... · go build ./... (FULL)
@@ -28,9 +32,10 @@
  *   NEETRU_PREPUSH_FULL=1     inclui build
  *   NEETRU_PREPUSH_FAST=1     pula testes
  *   NEETRU_ALLOW_MAIN_PUSH=1  permite push direto pra main/master
+ *   NEETRU_PREPUSH_NO_DOCS=1  pula só a etapa docs (declare no PR)
  *   --plan                    imprime o plano e sai
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,6 +109,7 @@ export function parseFlags(argv = [], env = {}) {
     full: env.NEETRU_PREPUSH_FULL === '1' || has('--full'),
     fast: env.NEETRU_PREPUSH_FAST === '1' || has('--fast'),
     allowMain: env.NEETRU_ALLOW_MAIN_PUSH === '1',
+    noDocs: env.NEETRU_PREPUSH_NO_DOCS === '1',
     plan: has('--plan'),
   };
 }
@@ -137,6 +143,75 @@ export function planSteps({ pkg, hasTsconfig, hasGoMod, flags }) {
   if (scripts.test && !flags.fast) steps.push(npmRun('test'));
   if (scripts.build && flags.full) steps.push(npmRun('build'));
   return steps;
+}
+
+// ─── etapa docs (template v3) ────────────────────────────────────────────────
+
+/** Versão mínima da CLI que tem `neetru docs check`. */
+export const DOCS_MIN_CLI = [2, 31, 0];
+
+export function parseCliVersion(text) {
+  const m = String(text ?? '').match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? m.slice(1, 4).map(Number) : null;
+}
+
+export function cliSupportsDocs(v) {
+  if (!v) return false;
+  for (let i = 0; i < 3; i++) if (v[i] !== DOCS_MIN_CLI[i]) return v[i] > DOCS_MIN_CLI[i];
+  return true;
+}
+
+/** Pasta de docs do produto (`docs.root` do neetru.config.json; nunca fora do repo). */
+export function docsRootOf(config) {
+  const r = config?.docs?.root;
+  if (typeof r !== 'string' || !r.trim() || r.includes('..') || /^([A-Za-z]:|\/)/.test(r)) return 'docs';
+  return r.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '') || 'docs';
+}
+
+/**
+ * Etapa docs (pura). `config` = neetru.config.json (null = não é repo de produto);
+ * `changedFiles` = arquivos do push (null = não deu pra calcular → roda, fail-closed);
+ * `cliVersion` = [maj, min, patch] da CLI instalada (null = ausente).
+ */
+export function planDocsStep({ config, changedFiles, cliVersion, flags }) {
+  if (!config || flags.noDocs) return null;
+  const root = docsRootOf(config);
+  if (Array.isArray(changedFiles) && !changedFiles.some((f) => String(f).replace(/\\/g, '/').startsWith(`${root}/`))) return null;
+  if (!cliSupportsDocs(cliVersion)) {
+    const v = cliVersion ? cliVersion.join('.') : 'não encontrada';
+    return { name: 'docs', skip: `CLI neetru ${v} — etapa docs pulada (precisa >= ${DOCS_MIN_CLI.join('.')}: npm i -g @neetru/cli)` };
+  }
+  return { name: 'docs', cmd: 'neetru', args: ['docs', 'check', '--changed', '--offline'] };
+}
+
+function gitOut(cwd, args, env) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: sanitizeGitEnv(env) });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+/** Arquivos que o push leva (relativos à raiz). null = não deu pra calcular. */
+export function pushedFiles(refs, cwd, env = process.env) {
+  const files = new Set();
+  for (const r of refs) {
+    if (isDeleteRef(r)) continue;
+    let base = /^0{40}$/.test(r.remoteSha ?? '') ? null : r.remoteSha;
+    if (!base) {
+      for (const ref of ['origin/main', 'origin/master']) {
+        base = gitOut(cwd, ['merge-base', ref, r.localSha], env);
+        if (base) break;
+      }
+    }
+    if (!base) return null;
+    const out = gitOut(cwd, ['diff', '--name-only', base, r.localSha], env);
+    if (out === null) return null;
+    out.split('\n').filter(Boolean).forEach((f) => files.add(f));
+  }
+  return refs.length ? [...files] : null;
+}
+
+function cliVersionOf(cwd, env) {
+  const r = spawnSync('neetru --version', { cwd, encoding: 'utf8', shell: true, env: sanitizeGitEnv(env) });
+  return r.status === 0 ? parseCliVersion(r.stdout) : null;
 }
 
 function run({ name, cmd, args }, cwd, env = process.env) {
@@ -185,6 +260,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     flags,
   });
 
+  // Etapa docs (repo de produto): entra depois do lint e antes dos testes.
+  const configPath = path.join(cwd, 'neetru.config.json');
+  if (existsSync(configPath) && !flags.noDocs) {
+    let config = null;
+    try {
+      config = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    } catch {
+      config = {};
+    }
+    const changed = pushedFiles(refs, cwd, env);
+    const touches = !Array.isArray(changed) || changed.some((f) => f.startsWith(`${docsRootOf(config)}/`));
+    const docs = touches ? planDocsStep({ config, changedFiles: changed, cliVersion: cliVersionOf(cwd, env), flags }) : null;
+    if (docs) {
+      const at = steps.findIndex((st) => /^(test|go test|build)$/.test(st.name));
+      steps.splice(at < 0 ? steps.length : at, 0, docs);
+    }
+  }
+
   process.stdout.write(`[pre-push] gate Neetru — ${steps.map((s) => s.name).join(' -> ') || '(nenhuma etapa)'}\n`);
   if (flags.plan) return 0;
   if (steps.length === 0) {
@@ -197,6 +290,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     if (step.error) {
       process.stderr.write(`[pre-push] FALHOU ${step.name}: ${step.error}\n`);
       return 1;
+    }
+    if (step.skip) {
+      process.stdout.write(`\n[pre-push] aviso: ${step.skip}\n`);
+      done.push(`${step.name} pulado`);
+      continue;
     }
     const r = await run(step, cwd, env);
     done.push(`${step.name} ${(r.ms / 1000).toFixed(1)}s`);

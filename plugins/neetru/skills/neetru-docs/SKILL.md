@@ -1,6 +1,6 @@
 ---
 name: neetru-docs
-description: Use when an AI (Claude) building a Neetru product (pdv-agiliza, gestovendas, …) or working on the Core needs the AUTHORITATIVE zero-to-PRODUCTION roadmap AND the canonical Neetru docs — bootstrap/login/doctor → READ the canonical docs via the docs control plane (`neetru docs` / live endpoints) → wire `@neetru/sdk` as the ONLY data conduit → deploy `--target vm` → environments/tenant → credential/OIDC via the server-side injector (NEVER `--env-file`) → schema migration → prove login+sale end-to-end. Read the real doc instead of guessing commands/endpoints/schemas that don't exist; MANY published docs are stale (SDK frozen at 2.x, CLI commands renamed) — this skill flags them and points to the 2026-07-01 credential/impediments/FAQ guides written this round.
+description: Use when an AI (Claude) building a Neetru product (pdv-agiliza, gestovendas, …) or working on the Core needs the AUTHORITATIVE zero-to-PRODUCTION roadmap AND the canonical Neetru docs — bootstrap/login/doctor → READ the canonical docs via the docs control plane (`neetru docs` / live endpoints) → wire `@neetru/sdk` as the ONLY data conduit → deploy `--target vm` → environments/tenant → credential/OIDC via the server-side injector (NEVER `--env-file`) → schema migration → prove login+sale end-to-end. Read the real doc instead of guessing commands/endpoints/schemas that don't exist; MANY published docs are stale (SDK frozen at 2.x, CLI commands renamed) — this skill flags them and points to the 2026-07-01 credential/impediments/FAQ guides written this round. Also covers the PRODUCT's own `docs/` (protocolo de docs de produto v1: `neetru docs init/new/check/sync`, deploy só avisa, publicação opcional no Core).
 ---
 
 # neetru-docs — ler a doc canônica + roteiro zero→PRODUÇÃO
@@ -12,10 +12,13 @@ Neetru publica a doc por um **docs control plane**. Antes de responder "como o N
 ## Ler a doc (mecânica)
 ```bash
 neetru docs list                 # registry: GET /api/cli/v1/docs → { ok, count, docs:[{slug,title,category}] }
-neetru docs get <slug>           # GET /api/cli/v1/docs/<slug> → { ok, doc:{slug, content(md), frontmatter} }
+neetru docs get <slug>           # GET /api/cli/v1/docs/<slug> → { ok, doc:{slug,title,category,version,…}, content, sha256 }
+neetru docs get <slug> --meta-only   # só os metadados, sem baixar o markdown
 neetru docs open [topic]         # atalho por tópico
 ```
 Bearer `nrt_…` carimba o audit; o conteúdo em si é público.
+
+**Forma da resposta de `get`:** o markdown vem em **`content`, no topo da resposta** — não dentro de `doc` (`doc` só traz os metadados). Em `--json`, leia `.content`, nunca `.doc.content` (que não existe).
 
 ## Roteiro passo-a-passo zero→prod (cada passo: doc canônica + skill)
 1. **Bootstrap / login / doctor** — `neetru bootstrap → login → whoami → doctor` (5/5 verde). **Não escreva código antes do `doctor` verde.** Ordem completa + fronteira de responsabilidade → skill **`neetru-onboarding`**; docs `saas-do-zero/01-conceitos`, `02-pre-requisitos`.
@@ -41,6 +44,23 @@ Vivem em `docs/_review/` (Suporte; product-facing, publicáveis no docs control 
 - `devex/cli-reference/marketplace.md` (comando virou **`neetru archive`** em 2.10.0; página arquivada em `docs/_archive/sistema/manuais/devex/cli-reference/` em 2026-09-29), `products-db.md` (virou **`neetru admin database`**), `GUIA_CLI_2_x.md` (**`neetru fn deploy`** foi deletado; **`neetru changelog`** não existe).
 - `infra/AGENT_HANDLERS.md` — "Agent v1.0 / 5 handlers" e ponteiro SSoT quebrado; a frota real roda ~28 handlers (1.6.x).
 - `docs/index.md` + `INDEX_MESTRE.md` — revision/versões congelados em maio.
+
+## Docs do SEU produto (protocolo v1 — CLI ≥ 2.31.0)
+Os comandos acima leem a doc **do Core**. O `docs/` do **seu produto** segue o **protocolo de documentação dos produtos SaaS** (no Core: `docs/sistema/contrib/PROTOCOLO_DOCS_PRODUTOS_SAAS.md`; as regras comuns de título, nome e ciclo de vida estão em `PROTOCOLO_WIKI_INTERNA.md`). Confira `neetru --version`: se `neetru docs init` não existir, a CLI instalada é anterior à 2.31.0.
+```bash
+neetru docs init                 # mínimo do 1º dia: README, CHANGELOG, docs/index.md, produto/VISAO_DO_PRODUTO.md,
+                                 # arquitetura/ARQUITETURA.md, runbooks/RUNBOOK_DEPLOY.md + chave "docs" no neetru.config.json
+neetru docs init --com-api       # + api/API_V1.md (o produto expõe /api/v1: app móvel ou integração)
+neetru docs init --migrar        # repo que JÁ tem docs: só acrescenta frontmatter inferido + relatório em docs/_audit/
+neetru docs new adr "Usar Postgres para vendas"   # doc novo na pasta certa, com nome e frontmatter do protocolo
+neetru docs check --changed      # antes do PR: FM/TI/NM/LK/PB/LC (os mesmos códigos do Core) + PR001–PR004
+neetru docs sync --dry-run       # o que subiria para o Core
+```
+- **Dois eixos:** `category` + `subcategory` dizem o **assunto** (lista fechada; em produto não se usa `Produtos SaaS`/`CLI`/`SDK`/`Bibliotecas` — PR003); `type` diz a **forma** (`guia`, `referencia`, `arquitetura`, `adr`, `runbook`, `norma`, `plano`, `relatorio`, `incidente`, `ata`, `changelog`). O frontmatter de produto exige **`product: <slug>`** igual ao do `neetru.config.json` (PR001). Nome de arquivo em `MAIÚSCULO_COM_UNDERLINE` (`RUNBOOK_DEPLOY.md`, `ADR-0001_<ASSUNTO>.md`; registro termina em `_AAAA-MM-DD`). `README.md` e `CHANGELOG.md` da raiz não têm frontmatter.
+- **`init` é idempotente** (nunca sobrescreve). **`--migrar` não move, não renomeia e não muda o texto** — só põe frontmatter e escreve o relatório com cada inferência e a confiança dela. Mover é decisão humana, num PR à parte; depois de mover, `neetru docs init` cria o que falta do mínimo do primeiro dia.
+- **O deploy só AVISA** (decisão do dono 2026-10-03): `neetru deploy` roda o check e segue mesmo com erro. O aviso não é licença — **rode `neetru docs check` antes de declarar pronto**.
+- **Publicar no Core é opcional:** `"docs": { "publishOnDeploy": true }` no `neetru.config.json` publica no fim do deploy de **produção** (falha na publicação não derruba o deploy), ou manual com `neetru docs sync`. Só sobe doc sem erro; `audience: publico` + `status: active` vira público, o resto fica interno; nada é apagado no Core. Enquanto o Core não tiver a rota de docs de produto, o sync responde "o Core ainda não aceita docs de produto" e sai sem erro.
+- `audience: publico` (ex.: `docs/usuario/`) é texto de superfície pública: sem o domínio do painel staff nem e-mail pessoal (PB001), sem auto-elogio, sem métrica inventada.
 
 ## Disciplina
 - Doc vence memória; **código vence doc**. Em conflito de superfície do SDK/CLI: a skill de domínio (`neetru-sdk-troubleshooting`, `neetru-deploy`) + version-check vencem a doc datada.

@@ -33,12 +33,13 @@ Três faixas. O produto-Claude precisa saber em qual está antes de agir.
 - **Copy:** nunca citar `core.neetru.com` em superfície pública; sem auto-elogio ("padrão Apple ou superior"); CTA pública → `minhaconta.neetru.com`.
 - **Dark mode é staff-only** → telas do cliente/públicas usam `.force-light` (não herdam `.dark` do aparelho).
 - **O pre-push local É o CI** (Actions sem billing) → o repo precisa do gate ligado e o `.md` diz como rodar/pular. Se o produto ainda não tem, **adote junto** com a geração do arquivo (skill `neetru-pre-push`).
+- **Docs do produto seguem o protocolo de docs de produto** (v1) → `docs/` com o mínimo do primeiro dia, porta de entrada em `docs/index.md`, `neetru docs check` antes de declarar pronto. O `.md` aponta pra `docs/index.md` e diz como publicar no Core (skill `neetru-docs`, seção "Docs do SEU produto").
 
 ## Ponteiros pras skills neetru-* (roteador a embutir)
 Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`** · chat dev → **`neetru-chat`** · regras vivas → **`neetru-regras`** · deploy prod → **`neetru-deploy`** · migração de schema → **`neetru-migrations`** · erro de `@neetru/sdk` → **`neetru-sdk-troubleshooting`** · "merged ≠ live" → **`neetru-release-gates`** · gate de push/CI local → **`neetru-pre-push`** · "é meu bug ou do Core?" → **`neetru-troubleshooting`** · sintaxe de CLI/SDK → **`neetru`**. Instalar/atualizar: `neetru archive skills install` (NÃO existe `neetru skills install`).
 
 ## Como GERAR / ATUALIZAR o arquivo
-1. **Descubra o produto** — nome, slug, stack (Next.js / Node API), target de deploy (workspace|vm), major do SDK que ele pina. Confirme versões reais (`npm view @neetru/sdk version`, `neetru --version`) e regras vivas via `neetru-docs`/`neetru-regras` antes de escrever — **não pine número fixo que envelhece**; use header "last verified: <data>".
+1. **Descubra o produto** — nome, slug, stack (Next.js / Node API), target de deploy (workspace|vm), major do SDK que ele pina, e se o repo já tem `docs/` no padrão (`docs/index.md` + frontmatter com `product`). Não tem → rode `neetru docs init` (repo novo) ou `neetru docs init --migrar` (repo que já tem docs) junto com a geração do arquivo. Confirme versões reais (`npm view @neetru/sdk version`, `neetru --version`) e regras vivas via `neetru-docs`/`neetru-regras` antes de escrever — **não pine número fixo que envelhece**; use header "last verified: <data>".
 2. **Preencha o template abaixo**, trocando os `<...>`. A convenção de arquivo do repo manda: se o produto usa `CLAUDE.md`, escreva nele; se usa `AGENTS.md`, espelhe o **mesmo conteúdo** lá (não divirja os dois).
 3. **Update idempotente** — se já existe: **preserve** as seções próprias do produto (domínio de negócio, comandos custom, notas do time) e **só refresque** as seções de contrato Neetru (raias, regras duras, roteador de skills). Não sobrescreva o que não é seu.
 4. **Sem segredo, sem invenção** — nada de token/`.env`/valor de secret no arquivo; não cravar internals não-documentados (spec de naming de VM, nomes de campo internos) — cite o **comportamento**, não o interno.
@@ -93,6 +94,13 @@ Dev local: `NEETRU_ENV=dev` (mocks). Dados fluem **só pelo SDK**.
 - `NEETRU_SKIP_PREPUSH=1` só em emergência, com o motivo escrito no PR. Nunca `--no-verify`.
 - Hook não dispara após clonar → `npm install` (o `prepare` liga `core.hooksPath=.githooks`).
 
+## Documentação (protocolo de docs de produto v1)
+- Porta de entrada: [`docs/index.md`](docs/index.md). Padrão: protocolo de documentação dos produtos SaaS da Neetru (skill `neetru-docs`, seção "Docs do SEU produto").
+- Doc novo: `neetru docs new <tipo> "<título>"` — pasta, nome (`MAIÚSCULO_COM_UNDERLINE`) e frontmatter (`product: <slug>`) certos.
+- Antes do PR: `neetru docs check --changed`. O deploy só avisa; quem garante é o check.
+- Publicar no Core: <manual com `neetru docs sync` | automático no deploy de produção (`docs.publishOnDeploy: true`)>.
+- Mudou algo que o usuário percebe? Linha no `CHANGELOG.md` na versão do `package.json` (PR004).
+
 ## Skills a acionar (roteador)
 - Primeiro dia → `neetru-onboarding` · docs → `neetru-docs` · chat → `neetru-chat` · regras → `neetru-regras`
 - Deploy prod → `neetru-deploy` · migração → `neetru-migrations`
@@ -102,7 +110,7 @@ Dev local: `NEETRU_ENV=dev` (mocks). Dados fluem **só pelo SDK**.
 - Instalar/atualizar skills: `neetru archive skills install`
 
 ## Antes de declarar pronto
-Gate de pre-push verde (FULL antes do merge; sem skip não-declarado) · `tsc`/build/testes verdes · deploy `resolved` só após LIVE + smoke (`/api/health` 200, `neetru status`, `neetru logs`) · ground-truth (só o que verifiquei) · zero segredo no chat/arquivo.
+Gate de pre-push verde (FULL antes do merge; sem skip não-declarado) · `tsc`/build/testes verdes · `neetru docs check` sem erro (e `CHANGELOG.md` com a versão) · deploy `resolved` só após LIVE + smoke (`/api/health` 200, `neetru status`, `neetru logs`) · ground-truth (só o que verifiquei) · zero segredo no chat/arquivo.
 
 <!-- ↓↓↓ Abaixo: seções próprias do produto (domínio, comandos, notas do time). NÃO apagar num refresh. ↓↓↓ -->
 ```
