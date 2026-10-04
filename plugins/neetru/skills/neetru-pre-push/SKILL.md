@@ -11,19 +11,28 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | Regra | Comportamento |
 |---|---|
 | Push direto pra `main`/`master` | **Bloqueado.** Fluxo é branch → PR → merge. Fuga consciente: `NEETRU_ALLOW_MAIN_PUSH=1` |
-| Etapas | typecheck → lint → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
+| Etapas | typecheck → lint → **docs** (repo de produto, se `docs/**` mudou) → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
 | Não deu pra calcular o que mudou | **Roda tudo** (fail-closed). Nunca pular etapa em silêncio |
 | Push só de remoção de ref (`--delete`) | Não valida nada |
 | `NEETRU_SKIP_PREPUSH=1` | Pula tudo — **emergência**, e o motivo vai escrito no corpo do PR |
 | `NEETRU_PREPUSH_FULL=1` | Inclui build (o `next build` pega export ilegal em `route.ts`, `'use server'` exportando não-função — coisas que tsc/vitest não pegam) |
 | `NEETRU_PREPUSH_FAST=1` | Pula testes (só tipos/lint). Para iteração; **não** no push que vira PR |
 | `--plan` | Mostra as etapas e sai, sem executar |
+| `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
 
 ## Estado por repo (confira no repo, não decore)
 - **Core** (`Neetru/neetru-core`): `.husky/pre-push` → `scripts/pre-push-check.mjs` — variante **estendida e escopada ao diff** (base = merge-base com `origin/main`): `tsc` root sempre; `tsc` de `functions/` se `functions/**` mudou (sem `functions/node_modules` = erro, não skip); `eslint` só nos arquivos alterados de `src/**` (>30 → `src` inteiro); frontmatter + manifest se `docs/**` mudou; `vitest --changed <merge-base>` por padrão, **full** se mudou `package*.json`/`tsconfig*`/`vitest.*`/`.npmrc`/`functions/**`. Mesmos flags.
 - **Demais repos** (CLI, SDK, agente, libs, produtos): `scripts/pre-push-gate.mjs` (o template desta skill). Se o repo ainda não tem → adote (abaixo).
+
+## Etapa **docs** (repos de produto — template ≥ v3)
+Protocolo de docs de produto §8.3. Num repo **de produto** (tem `neetru.config.json`), quando o push muda algo em `docs/**` (ou na pasta de `docs.root`), o gate roda **`neetru docs check --changed --offline`** — a catraca: só os docs alterados contra a branch principal, com a taxonomia embutida na CLI (sem rede).
+- **Erro** (FM/TI001/TI002/NM001/LK001/PB001/PR001/PR003…) **barra o push**; aviso e sugestão não.
+- **Sem a CLI `neetru` ≥ 2.31.0** instalada, a etapa é **pulada com aviso** — nunca falha por falta de ferramenta. Atualize: `npm i -g @neetru/cli`.
+- Não deu pra calcular o que mudou → roda a etapa (fail-closed, como o resto do gate).
+- Repo sem `neetru.config.json` (CLI, SDK, agente, libs) não tem a etapa. O **Core** tem a própria checagem de docs (frontmatter + manifest) no `pre-push-check.mjs`.
+- Doc quebrado que não é seu (legado)? A catraca só cobra o que você alterou: corrija o que tocou. Erro em doc alheio que você não mexeu não aparece.
 
 ## ⚠️ Worktree novo em repo com husky: NENHUM hook roda até você gerar `.husky/_`
 O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored) pelo `npm install`. Um `git worktree add` (inclusive os worktrees de agentes em `.claude/worktrees/`) **não tem essa pasta** e ninguém roda `npm install` nele (node_modules costuma vir por junction) → git não acha hook nenhum → **pre-commit e pre-push somem em silêncio** e o push sobe sem gate (achado 2026-09-30, Core PR #518).
@@ -35,7 +44,7 @@ O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored
 
 ## Adotar num repo que não tem (5 min)
 1. Copie `pre-push-gate.mjs` **desta pasta da skill** pra `scripts/pre-push-gate.mjs` do repo. Sem dependências (Node ≥ 18 + git). Detecta a stack:
-   - **Node:** script `typecheck`; senão `lint` se for `tsc --noEmit`; senão `npx tsc --noEmit` se houver `tsconfig.json` → `lint` → `test` → (`build` em FULL).
+   - **Node:** script `typecheck`; senão `lint` se for `tsc --noEmit`; senão `npx tsc --noEmit` se houver `tsconfig.json` → `lint` → `docs` (só repo de produto com `docs/**` alterado) → `test` → (`build` em FULL).
    - **Go** (`go.mod` sem `package.json`): `go vet ./...` → `go test ./...` → (`go build ./...` em FULL).
    - Override: `package.json` → `"neetru": { "prePush": ["typecheck", "test"] }`.
 2. Ligue o hook **sem dependência nova** (não mexe em lockfile):
