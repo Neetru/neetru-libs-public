@@ -60,12 +60,12 @@ Primeiro dia → **`neetru-onboarding`** · docs canônicos → **`neetru-docs`*
 ## Stack & runtime
 <Next.js 15 | Node API> · consome `@neetru/sdk@<major>` via `createNeetruClient` + namespaces · opera via `@neetru/cli`.
 Deploy: <workspace | vm>. Ambientes: `dev-local → staging → prod` (prod só por promoção).
-Dev local: `NEETRU_ENV=dev` (mocks). Dados fluem **só pelo SDK**.
+Dev local: `NEETRU_ENV=dev` (mocks do SDK) + banco real em container com `neetru dev` (reaplica o schema a cada save) + `neetru smoke` antes do deploy. Core e agente **não** rodam local — fluxo que depende do agente só se prova na VM. Dados fluem **só pelo SDK**.
 
 ## RAIAS — o que EU faço vs o que é gated
 ### Faço sozinho (este repo)
 - Regra-de-negócio, schema do produto, UI (PT-BR plain), testes.
-- Deploy em staging/workspace; mocks em dev.
+- Deploy em staging/workspace; mocks em dev; banco local (`neetru dev`) e `neetru smoke` antes de subir.
 - Consumir dados SÓ pelo SDK. Bug de negócio/UI/dep de terceiro DO produto: resolvo aqui.
 ### Owner-gated (COBRO via `neetru-chat`, não executo)
 - prod-promote · VM nova (custo) · release do agente · Direct VPC Egress ·

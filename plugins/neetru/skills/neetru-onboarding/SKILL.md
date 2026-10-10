@@ -33,7 +33,7 @@ Não escreva código antes do `doctor` verde. O `docs init` é idempotente (nunc
 - Multi-tenant: o SDK injeta `tenantId`. Dados fluem **pelo SDK** (`neetru-regras`).
 
 ## 4. Fronteira de responsabilidade
-- **Você resolve sozinho:** código/regra-de-negócio/schema do produto, deploy em workspace, mocks (`NEETRU_ENV=dev`).
+- **Você resolve sozinho:** código/regra-de-negócio/schema do produto, deploy em workspace, mocks (`NEETRU_ENV=dev`), banco local (`neetru dev`) e `neetru smoke` — o que existe na máquina está na skill `neetru` › "Dev local na máquina".
 - **Owner-gated** (cobre via `neetru-chat`, não execute): prod-promote (owner digita "promove"), **VM nova = custo**, Direct VPC Egress, Resend/`RESEND_API_KEY`, `stripePriceId` LIVE, grants IAM, **release do agente**.
 - **Staff-assisted:** coisas sem comando CLI (ex.: `neetru domain` não existe → peça).
 - **Escopo de bug:** `neetru bug` só Core/SDK/CLI/libs (`neetru-regras`).

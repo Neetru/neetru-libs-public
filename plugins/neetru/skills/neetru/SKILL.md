@@ -115,8 +115,9 @@ Detalhes em `cli/src/commands/<nome>.ts` do repo `Neetru/neetru-cli` e em `docs/
 | **IA + UI** | `ai [-m claude\|openai\|gemini\|auto]` (REPL Neetru-aware), `ui` (menu interativo TUI) |
 | **Ops scripts** | `ops heartbeat`, `ops smoke notification`, `ops smoke observability`, `ops reg-token <serverId>`, `ops resolve-errors`, `ops openapi-diff` |
 | **VM** | `vm list/describe` |
-| **Dev local** | `dev [--port]` — inicia emulators Firebase + servidor Next.js |
-| **Mocks** | `mocks serve` — servidor mock local do SDK pra desenvolver sem conta Neetru |
+| **Dev local** | `dev [--db <nome>] [--schema <path>]` — banco do produto em container Docker + reaplica `db/schema.ts` a cada save · `dev up` — só sobe o banco e imprime a conexão · `dev use/sync/status` — contexto dev-local do projeto · `dev exec` — só CI do Core. Ver "Dev local na máquina" |
+| **Mocks** | `mocks reset` — zera as fixtures de dev (`.neetru/dev-fixtures.json`). **Não existe `mocks serve`** — os mocks vivem dentro do SDK (`NEETRU_ENV=dev`) |
+| **Teste local antes do deploy** | `smoke [--base-url] [--routes csv] [--health-path] [--prod <url>] [--json]` — percorre as páginas do app local (alcance + login + health), exit 1 se algo falha |
 
 ## Pegadinhas operacionais
 - **VMs são multipropósito**: rodam vários bancos/produtos juntos. Wizards (`new`, `servers provision`) NÃO devem criar VM nova quando uma existe — confirmar antes.
@@ -303,6 +304,19 @@ const { data, isLoading, syncState } = useCollection(client.db.collection('pedid
 
 ## Modo dev (`NEETRU_ENV=dev`)
 Setar `NEETRU_ENV=dev` faz o factory devolver **mocks in-memory** pra todos os namespaces stateful (`auth` → `DEV_FIXTURE_USER` previsível, `usage` zera quota, `support` lista vazia, `db` mapa interno, `notifications` in-memory). Permite rodar o produto SaaS local sem provisionar conta Neetru. Mocks também exportáveis manualmente do `/mocks` pra testes: `MockAuth`, `MockUsage`, `MockSupport`, `MockEntitlements`, `MockDb`, `MockCheckout`, `MockWebhooks`, `MockNotifications`.
+
+## Dev local na máquina — o que existe de verdade (conferido no código do CLI em 2026-10-09)
+
+| Peça | Como rodar | Observação |
+|---|---|---|
+| SDK sem conta Neetru | `NEETRU_ENV=dev` (`neetru env switch dev`) | Mocks em memória. Negar feature em teste: `MockEntitlements.__deny(slug, feature)`. Zerar fixtures: `neetru mocks reset` |
+| Banco **real** do produto | `neetru dev` | Container Postgres 16 / MySQL 8 do engine em `.neetru/db.json` + `db apply` automático a cada save do schema ("salvar = aplicado"). Ctrl-C para o container. É o caminho pra testar SQL/migração de verdade antes da VM |
+| Só o banco, sem watch | `neetru dev up` | Lê `database.engine` do `neetru.config.json`, gera `neetru-compose.dev.yml` e imprime a `DATABASE_URL` pro `.env.local`. **Até sair a CLI com o fix `neetru-cli#58`, o `dev up` falha** (o compose antigo pedia um `Dockerfile.agent` que nunca era gravado) — use `neetru dev` |
+| App | `npm run dev` | Fora de container |
+| Checar o app antes do deploy | `neetru smoke` | Contra o app local; `--prod <url>` soma um smoke básico de produção |
+| Contexto do projeto | `neetru dev use --product <slug> --sync` · `dev status` · `dev sync --write-db` | Grava `.neetru/dev.json`; `--write-db` traz os bancos dev do Core pro `.neetru/db.json` |
+
+**Não existe na máquina do dev de produto:** Core local, agente local, `logs --local` (lê o coletor do **Core** local) e `dev exec` (exige o `firebase.json` do repo do Core). Deploy, migração pelo agente, backup e logs de runtime só acontecem na VM — prove lá (`neetru-release-gates`). Não declare "testado local" um fluxo que depende do agente.
 
 ## Templates `neetru add` — o que o scaffold gera
 
