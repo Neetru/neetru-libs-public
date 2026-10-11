@@ -1,101 +1,125 @@
-# Instalação do plugin `neetru` no Claude Code
+# Instalação das skills Neetru no Claude Code
 
-Três opções. A **Opção A** (marketplace) é a mais prática para devs com acesso ao repo. A **Opção B** (diretório local) funciona sem publicar nada. A **Opção C** (symlink) é para quem já tem o repo clonado e quer atualizações automáticas.
+Este diretório é publicado como o repositório **público** `Neetru/neetru-libs-public` —
+a **loja** de onde as máquinas baixam. Lá, o conteúdo deste diretório fica na **raiz**:
+`plugins/`, `INSTALL.md`, `README.md`, `.claude-plugin/marketplace.json`.
+
+> Os caminhos abaixo são os da **loja**. Nenhum deles tem prefixo `claude-skills/`:
+> esse prefixo só existe no repo privado `Neetru/neetru-libs`, onde estes arquivos
+> são editados. Clonar o repo privado não é necessário — nem possível, pra quem não
+> tem acesso.
 
 ---
 
-## Opção A — Via marketplace (recomendada, se `Neetru/neetru-libs` for público)
+## Opção A — `neetru archive skills install` (recomendada)
 
-O Claude Code suporta adicionar qualquer repo GitHub como marketplace, incluindo monorepos com `--sparse`.
+Quem já tem a CLI Neetru não precisa de marketplace nenhum:
 
 ```bash
-# 1. Adiciona o repo neetru-libs como marketplace (monorepo com sparse checkout)
-claude plugin marketplace add Neetru/neetru-libs \
-  --sparse .claude-plugin plugins \
-  --scope user
+npm install -g @neetru/cli     # versão: npm view @neetru/cli version
+neetru archive skills install  # instala/atualiza as skills em ~/.claude/skills/
+```
 
-# 2. Instala a skill
-claude plugin install neetru@neetru-libs --scope user
+Roda de novo pra atualizar. É o caminho que as skills `neetru-onboarding` e
+`neetru-produto-md` mandam seguir. (O comando é `neetru archive skills install` —
+`neetru skills install` não existe.)
 
-# 3. Reinicia o Claude Code para carregar
+---
+
+## Opção B — Marketplace do Claude Code
+
+A loja é um repo **público**: o clone é anônimo, sem SSH nem token.
+
+```bash
+# 1. Adiciona a loja como marketplace
+claude plugin marketplace add Neetru/neetru-libs-public --scope user
+
+# 2. Instala o plugin `neetru` vindo do marketplace `neetru`
+claude plugin install neetru@neetru --scope user
+
+# 3. Reinicia o Claude Code
 ```
 
 **Notas:**
-- `--sparse .claude-plugin plugins` limita o checkout ao manifesto e à pasta `plugins/` dentro do repo. Sem isso, clona o repo inteiro (inclui `node_modules` dos pacotes npm — pesado).
-- `--scope user` instala para todos os projetos do usuário. Use `--scope project` para instalar só no projeto atual (grava em `.claude/settings.json` local).
-- O repo `Neetru/neetru-libs` precisa estar **público** para que outros devs consigam clonar sem autenticação extra. Se for privado, o dev precisa ter SSH ou token configurado no git.
-- Após `marketplace add`, o marketplace fica disponível permanentemente. Não é preciso rodar de novo.
+- `--scope user` vale pra todos os projetos. `--scope project` grava no
+  `.claude/settings.json` do projeto; `--scope local`, no `settings.local.json`.
+- Não precisa de `--sparse`: a loja não tem `node_modules` versionado e o
+  manifesto está na raiz.
+- O nome do marketplace (`neetru`) vem do campo `name` de
+  `.claude-plugin/marketplace.json`; o nome do plugin (`neetru`), do `plugins[].name`.
+  Daí o `neetru@neetru`.
 
 **Atualizar depois:**
 ```bash
-claude plugin update neetru@neetru-libs
+claude plugin marketplace update neetru
+claude plugin update neetru@neetru
 ```
 
 ---
 
-## Opção B — Diretório local (sem publicar no GitHub)
+## Opção C — Diretório local (testar antes de instalar)
 
-Se você já tem o repo clonado em disco, o Claude Code aceita um path local como marketplace.
-
-```bash
-# Substitua o path pelo caminho real do clone
-claude plugin marketplace add /caminho/para/neetru-libs/claude-skills \
-  --scope user
-
-# Depois instala
-claude plugin install neetru --scope user
-```
-
-Ou, mais direto, aponte o `--plugin-dir` na linha de comando do claude:
+Com um clone da loja em disco:
 
 ```bash
-claude --plugin-dir /caminho/para/neetru-libs/claude-skills
+git clone https://github.com/Neetru/neetru-libs-public.git ~/neetru-libs-public
+
+# carrega só nesta sessão, sem instalar nada
+claude --plugin-dir ~/neetru-libs-public/plugins/neetru
 ```
 
-`--plugin-dir` carrega o plugin para aquela sessão somente (não persiste). Útil para testar antes de instalar permanentemente.
+Ou registra o clone como marketplace:
+
+```bash
+claude plugin marketplace add ~/neetru-libs-public --scope user
+claude plugin install neetru@neetru --scope user
+```
 
 ---
 
-## Opção C — Cópia manual (sem marketplace)
+## Opção D — Cópia manual (sem marketplace)
+
+As skills são `plugins/neetru/skills/<nome>/SKILL.md`. Pra copiar todas:
 
 ```bash
-# Clone o repo (ou use o que você já tem)
-git clone https://github.com/Neetru/neetru-libs.git ~/neetru-libs
-
-# Copia a skill pro diretório de skills do Claude Code
+git clone https://github.com/Neetru/neetru-libs-public.git ~/neetru-libs-public
 mkdir -p ~/.claude/skills
-cp -r ~/neetru-libs/claude-skills/skills/neetru ~/.claude/skills/neetru
-
-# Reinicia o Claude Code
+cp -r ~/neetru-libs-public/plugins/neetru/skills/. ~/.claude/skills/
 ```
 
 **Atualizar depois:**
 ```bash
-git -C ~/neetru-libs pull
-cp -r ~/neetru-libs/claude-skills/skills/neetru ~/.claude/skills/neetru
+git -C ~/neetru-libs-public pull
+cp -r ~/neetru-libs-public/plugins/neetru/skills/. ~/.claude/skills/
 ```
 
 No Windows (PowerShell):
 ```powershell
-git -C "$env:USERPROFILE\neetru-libs" pull
-Copy-Item -Recurse -Force "$env:USERPROFILE\neetru-libs\claude-skills\skills\neetru" "$env:USERPROFILE\.claude\skills\neetru"
+git -C "$env:USERPROFILE\neetru-libs-public" pull
+Copy-Item -Recurse -Force "$env:USERPROFILE\neetru-libs-public\plugins\neetru\skills\*" "$env:USERPROFILE\.claude\skills\"
 ```
 
 ---
 
 ## Verificar instalação
 
-Após instalar e reiniciar o Claude Code, execute num projeto Neetru:
+Reinicie o Claude Code e, num projeto Neetru:
 
 ```
 /neetru
 ```
 
-O Claude deve responder com o contexto da skill. Se não responder, verifique:
+Se não responder:
 
 ```bash
-claude plugin list
-# deve mostrar "neetru" na lista
+claude plugin list               # deve mostrar "neetru"
+claude plugin marketplace list   # deve mostrar o marketplace "neetru"
+```
+
+Na cópia manual (Opção D) não há plugin nem marketplace — confira os arquivos:
+
+```bash
+ls ~/.claude/skills/neetru/SKILL.md
 ```
 
 ---
@@ -103,26 +127,35 @@ claude plugin list
 ## Desinstalar
 
 ```bash
-claude plugin uninstall neetru
+claude plugin uninstall neetru@neetru
+claude plugin marketplace remove neetru
 ```
 
-Ou, se instalou por cópia manual:
-```bash
-rm -rf ~/.claude/skills/neetru
-```
+Se instalou por cópia manual, apague os diretórios de skill que copiou de
+`plugins/neetru/skills/` pra `~/.claude/skills/`.
 
 ---
 
 ## Pré-requisitos
 
-- Claude Code instalado (`npm install -g @anthropic-ai/claude-code` ou equivalente)
-- Acesso ao repo `Neetru/neetru-libs` (se usar Opção A — precisa ser público ou ter credenciais git)
-- `@neetru/cli@2.8.0` instalado globalmente para usar comandos `neetru …` no terminal: `npm install -g @neetru/cli`
+- Claude Code instalado (`npm install -g @anthropic-ai/claude-code`).
+- Pras Opções A e B, nada além disso: `Neetru/neetru-libs-public` é público.
+- Pros comandos `neetru …`: `npm install -g @neetru/cli`. **Não fixe versão** —
+  confira com `npm view @neetru/cli version`.
 
 ---
 
-## Notas para o owner (pendências)
+## Pra quem edita estas skills
 
-- **Repo precisa ser público** para que a Opção A funcione para devs externos sem configuração extra de git. Se ficar privado, a Opção B/C é a via.
-- **Estrutura de marketplace**: o `claude plugin marketplace add` espera um repo com estrutura de marketplace (diretório `plugins/` com subpastas de plugins, cada uma com `.claude-plugin/plugin.json`). A estrutura atual em `claude-skills/` usa `skills/neetru/` diretamente como plugin. Para usar como marketplace formal, seria necessário criar `plugins/neetru/.claude-plugin/plugin.json` e mover os arquivos. Por ora, a Opção B (`--plugin-dir`) e a Opção C (cópia manual) funcionam sem ajuste.
-- O manifesto `.claude-plugin/plugin.json` está na raiz de `claude-skills/`, o que é o formato correto para instalar via `--plugin-dir`.
+A fonte é o repo privado `Neetru/neetru-libs`, em `claude-skills/`. A loja é
+espelho — **não edite direto lá**, a próxima sincronização sobrescreve.
+
+```bash
+# no repo privado, depois de editar claude-skills/
+npm run sync:mirror -- <caminho-do-clone-da-loja>
+```
+
+O gate de pré-push recusa o push quando `claude-skills/` mudou e o espelhamento
+não foi registrado. Nunca houve sincronização automática: o workflow que
+prometia isso falhou em 14/14 execuções (Actions da org sem cobrança). Detalhe
+em `scripts/store-sync.mjs` do repo privado.

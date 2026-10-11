@@ -12,9 +12,9 @@ Dois pacotes publicados no npm, cada um em repo próprio:
 
 > **Versões (última verificação 2026-09-30):** CLI `2.28.8` · SDK `3.6.0` · agente Linux: por VM (`neetru servers list`) · Core CalVer `2026.07.x`. **Não hardcode** em código — confirme em runtime: `npm view @neetru/cli version`, `npm view @neetru/sdk version`, `neetru servers list` (agente por VM), `/api/health` (`.sha`/`.revision` do Core). Números em texto envelhecem; o header aqui é só "por onde andava".
 
-Libs de apoio publicadas em `Neetru/neetru-libs` (todas `0.1.0`):
+Libs de apoio publicadas em `Neetru/neetru-libs`. **A mesma regra da linha acima vale aqui: não hardcode versão** — `npm view <pacote> version` antes de fixar qualquer coisa. Nenhuma delas ainda está em `0.1.0`.
 - **`@neetru/db-classifier`** — avalia se uma migration SQL é aditiva ou destrutiva. Função pura, parser AST, isomórfica Node.
-- **`@neetru/sql-guard`** — classificador read-only + gate de hardening de SQL. Barra tautologia WHERE, impõe LIMIT em SELECTs, fail-closed.
+- **`@neetru/sql-guard`** — classificador read-only + gate de hardening de SQL. Barra tautologia WHERE, impõe LIMIT em SELECTs, fail-closed. **Piso de segurança: `>=0.1.9`** — versões anteriores têm furo conhecido; ver a seção da lib.
 - **`@neetru/pii-mask`** — mascaramento de PII em result-set antes de exibir na UI staff. Salvaguarda LGPD, fail-closed, zero dependências.
 - **`neetru-glossario`** — vocabulário plain PT-BR do ecossistema como código. Fonte única de terminologia importada pelo CLI e pelo Core; base do lint anti-jargão.
 
@@ -342,7 +342,7 @@ Templates usam Next.js 15 App Router + `'use client'` quando interativos.
 
 # Libs de apoio (`@neetru/db-classifier`, `@neetru/sql-guard`, `@neetru/pii-mask`, `neetru-glossario`)
 
-Todas em `0.1.0`, publicadas no npm, repo `Neetru/neetru-libs`.
+Publicadas no npm, repo `Neetru/neetru-libs`. **Confirme a versão em runtime** — `npm view @neetru/db-classifier version`, `npm view @neetru/sql-guard version`, `npm view @neetru/pii-mask version`, `npm view neetru-glossario version`. Esta skill não fixa número: já fixou `0.1.0` pra todas e ensinou, por meses, a instalar uma `sql-guard` com furo crítico aberto.
 
 ## `@neetru/db-classifier`
 Avalia se uma migration SQL é aditiva (safe) ou destrutiva (exige confirmação humana). Função pura, parser AST, sem dependências pesadas.
@@ -360,16 +360,36 @@ O CLI (`neetru db apply`) usa internamente. Você usa nos testes de migration do
 ## `@neetru/sql-guard`
 Classificador read-only + gate de hardening. Decide se um statement é seguro pro visualizador de banco staff.
 
-```ts
-import { guard } from '@neetru/sql-guard';
+> **Piso de segurança: `>=0.1.9`.** Não existe export `guard()` — nunca existiu em nenhuma versão publicada. Os exports reais são `classifyStatement`, `hardenSelect` e `assertNonTrivialWhere`.
 
-const result = guard(sqlText);
-// result.safe: boolean
-// result.normalized: string  — com LIMIT injetado se SELECT sem LIMIT
-// result.reasons: string[]   — descreve o que barrou
+```ts
+import { classifyStatement, hardenSelect, assertNonTrivialWhere } from '@neetru/sql-guard';
+
+const veredito = classifyStatement(sqlText, 'postgresql');
+// veredito.safe: boolean         — true SÓ quando provado read-only
+// veredito.statementType: string — 'select' | 'update' | 'multiple' | 'unknown' | ...
+// veredito.reason: string        — motivo em PT-BR
+// veredito.dangerousFunctions?: string[]
+
+// LIMIT é imposto ENCAPSULANDO o SELECT, não mexendo no AST:
+const limitado = hardenSelect(sqlText, { maxRows: 500, dialect: 'postgresql' });
+
+// Escrita break-glass: lança se o WHERE for tautológico (atingiria tudo).
+assertNonTrivialWhere("DELETE FROM users WHERE id = 42");
 ```
 
 Fail-closed: qualquer falha de parse → `safe: false`. Não passa DDL (CREATE/DROP/ALTER), DML de mutação (INSERT/UPDATE/DELETE), nem SELECT com WHERE tautológico (`1=1`).
+
+**Por que o piso é `0.1.9`** — duas divergências de lexer entre o `node-sql-parser` e o Postgres real deixavam o guard aprovar SQL que o banco executava de outro jeito. Comprovado contra os tarballs publicados:
+
+| versão | `\'` antes de aspa (CRIT) | `LIKE '%' ESCAPE '!'` (CRIT) | CR fecha `--` (HIGH) |
+|---|---|---|---|
+| `0.1.0` | passa | passa | passa |
+| `0.1.7` | passa | recusa | passa |
+| `0.1.8` | recusa | recusa | passa |
+| **`0.1.9`** | **recusa** | **recusa** | **recusa** |
+
+No fluxo do visualizador de banco (`BEGIN READ ONLY` → exec → `ROLLBACK`), `SELECT * FROM t WHERE a = 'x\') AS a; COMMIT; DELETE FROM t; SELECT * FROM (SELECT 1 --'` passava como UM select seguro: o `COMMIT` encerrava a transação read-only e o `DELETE` apagou 7/7 linhas num Postgres 17.5 real. No break-glass, `name = 'x\' OR 1=1 --'` furava o `assertNonTrivialWhere` e apagava 7/7.
 
 ## `@neetru/pii-mask`
 Mascara dados pessoais num result-set antes de exibir na UI staff em produção.
