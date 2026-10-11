@@ -1,54 +1,71 @@
-# neetru — Skills Claude Code
+# Skills Neetru para Claude Code
 
-Skills do ecossistema Neetru para Claude Code. Cobre o CLI control plane (`@neetru/cli`) e o SDK runtime (`@neetru/sdk`) com contexto preciso sobre comandos, namespaces, versões, e libs de apoio.
+Skills do ecossistema Neetru para Claude Code. Cobrem o CLI control plane
+(`@neetru/cli`), o SDK runtime (`@neetru/sdk`) e as libs de apoio, com os
+comandos e assinaturas reais.
+
+> Este README é publicado na loja pública `Neetru/neetru-libs-public`, onde ele
+> fica na **raiz** — os caminhos abaixo não têm prefixo `claude-skills/`.
 
 ## O que tem aqui
 
-### Skill `neetru`
+`plugins/neetru/skills/<nome>/SKILL.md` — uma pasta por skill:
 
-Skill principal. Ativa automaticamente quando o contexto menciona:
+| Skill | Pra quê |
+|---|---|
+| `neetru` | CLI `neetru …` e SDK `@neetru/sdk` — comandos, namespaces, libs de apoio |
+| `neetru-onboarding` | Primeiro dia num produto Neetru |
+| `neetru-docs` | Doc canônica + roteiro até produção |
+| `neetru-deploy` | Levar um produto a produção |
+| `neetru-migrations` | Mudança de schema em produção |
+| `neetru-pre-push` | O gate de pré-push (o CI local) |
+| `neetru-release-gates` | "merged ≠ live": o que a frota de fato roda |
+| `neetru-troubleshooting` | "é meu bug ou do Core?" |
+| `neetru-sdk-troubleshooting` | Erro de `@neetru/sdk`, sintoma → causa → fix |
+| `neetru-produto-md` | CLAUDE.md / AGENTS.md de um repo de produto |
+| `neetru-regras` | Regras duras do owner |
+| `neetru-trabalho-continuo` | Postura de trabalho contínuo |
+| `neetru-chat` | Chat de dev entre agentes |
 
-- Comandos `neetru …` (deploy, db apply, audit tail, tenants, ops, etc.)
-- Imports de `@neetru/sdk` (qualquer subpath)
-- Scaffold ou deploy de produto SaaS novo no ecossistema Neetru
-- Libs `@neetru/db-classifier`, `@neetru/sql-guard`, `@neetru/pii-mask`, `neetru-glossario`
+## Versões
 
-O que a skill sabe:
+**Nenhuma versão é fixada aqui de propósito.** Número em texto envelhece e vira
+mentira — foi assim que esta loja chegou a ensinar uma `@neetru/sql-guard` com
+furo crítico aberto. Confirme em runtime:
 
-- **CLI `@neetru/cli@2.8.0`**: ~55 comandos, incluindo `neetru db` (migrations por produto), `neetru admin database` (plano de controle staff), `neetru ops` (6 scripts operacionais), destrutivos top-tier com MFA obrigatório, flags `--dry-run`/`--json`/`--yes`/`--mfa-token`.
-- **SDK `@neetru/sdk@2.1.0`**: 13 namespaces com assinaturas corretas (`auth`, `catalog`, `entitlements`, `telemetry`, `usage`, `support`, `db`, `checkout`, `webhooks`, `notifications`, `errors`, `mocks`, `react`). Namespace `db` reestruturado em v2.0 (offline-first, engine-aware, suporte SQL via `client.db.sql()`). Modo dev `NEETRU_ENV=dev` com mocks in-memory.
-- **Libs de apoio** (`@neetru/db-classifier`, `@neetru/sql-guard`, `@neetru/pii-mask`, `neetru-glossario`): APIs básicas e quando usar cada uma.
-- **Agente Linux v1.5.0** (repo `Neetru/neetru-agent-service-vm`): contrato Core↔agente via Firestore.
-
-## Requisitos
-
-- Claude Code instalado
-- `@neetru/cli@2.8.0` globalmente para usar os comandos no terminal: `npm install -g @neetru/cli`
-- `@neetru/sdk@2.1.0` no projeto do produto SaaS: `npm install @neetru/sdk`
+```bash
+npm view @neetru/cli version
+npm view @neetru/sdk version
+npm view @neetru/sql-guard version   # piso de segurança: >=0.1.9
+```
 
 ## Instalação
 
-Ver [INSTALL.md](./INSTALL.md) para o passo-a-passo completo (3 opções).
+Ver [INSTALL.md](./INSTALL.md). Resumo:
 
-**Resumo rápido — diretório local:**
 ```bash
-claude --plugin-dir /caminho/para/neetru-libs/claude-skills
+# com a CLI Neetru (recomendado)
+neetru archive skills install
+
+# ou via marketplace do Claude Code
+claude plugin marketplace add Neetru/neetru-libs-public --scope user
+claude plugin install neetru@neetru --scope user
 ```
 
-**Cópia manual permanente:**
-```bash
-cp -r claude-skills/skills/neetru ~/.claude/skills/neetru
-```
+## Pra quem edita
+
+A fonte é o repo privado `Neetru/neetru-libs`, em `claude-skills/`. **Esta loja é
+espelho** — editar direto aqui é perder o trabalho no próximo espelhamento. Veja
+a seção final do `INSTALL.md`.
 
 ## Licença
 
-UNLICENSED — uso interno Neetru. Não distribuir externamente sem autorização.
+UNLICENSED — uso interno Neetru. Repositório público para distribuição das
+skills; isso não concede licença de uso do código.
 
 ## Links
 
 - Repo CLI: `Neetru/neetru-cli`
 - Repo SDK: `Neetru/neetru-sdk`
 - Repo agente: `Neetru/neetru-agent-service-vm`
-- Repo libs: `Neetru/neetru-libs`
-- Painel staff: `core.neetru.com`
-- Docs: `docs/sistema/manuais/devex/cli-reference/` e `docs/sistema/manuais/devex/sdk-reference/` no repo `neetru_core`
+- Repo libs (privado): `Neetru/neetru-libs`
