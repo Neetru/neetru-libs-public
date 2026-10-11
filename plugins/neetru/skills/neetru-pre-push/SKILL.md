@@ -46,7 +46,16 @@ O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored
 ## Adotar num repo que não tem (5 min)
 1. Copie `pre-push-gate.mjs` **desta pasta da skill** pra `scripts/pre-push-gate.mjs` do repo. Sem dependências (Node ≥ 18 + git). Detecta a stack:
    - **Node:** script `typecheck`; senão `lint` se for `tsc --noEmit`; senão `npx tsc --noEmit` se houver `tsconfig.json` → `lint` → `docs` (só repo de produto com `docs/**` alterado) → `test` → (`build` em FULL).
-   - **Go** (`go.mod` na raiz): `go vet ./...` → `go test ./...` → (`go build ./...` em FULL). **Coexiste com a perna Node** — repo polyglot (`go.mod` + `package.json` na raiz) roda as duas. Sem `go` no PATH a perna sai como **aviso**, não como falha.
+   - **Go** (`go.mod` na raiz **ou em subpasta**): `go vet ./...` → `go test ./...` → (`go build ./...` em FULL). **Coexiste com a perna Node** — repo polyglot (`go.mod` + `package.json` na raiz) roda as duas. Sem `go` no PATH a perna sai como **aviso**, não como falha.
+     - **Monorepo aninhado funciona:** se a raiz nao tem `go.mod`, o gate procura em
+       profundidade 1-2 (`apps/agent/go.mod`) e roda a perna Go **dentro daquela pasta** —
+       `go vet ./...` na raiz nao acha pacote nenhum. O nome da etapa mostra onde validou
+       (`go vet (apps/agent)`). A varredura nao entra em `node_modules`, `vendor`, `dist`,
+       `build`, `.next` nem `testdata`, pra nao validar codigo de terceiro no seu push.
+     - **Para mandar voce mesmo:** declare `"neetru": { "goDir": "apps/agent" }` no
+       `package.json` da raiz. O declarado vence a varredura. Se apontar pra uma pasta sem
+       `go.mod`, o gate **falha dizendo isso** — configuracao errada nao pode virar perna
+       que some calada (foi esse o defeito original do `bug_e0fb387f`).
    - Override: `package.json` → `"neetru": { "prePush": ["typecheck", "test"] }`. **Substitui a auto-detecção inteira** (o repo assumiu o controle e pode delegar por app), mas honra FAST (pula `test` e `test:*`) e FULL (acrescenta `build`) igual a ela.
    - **Monorepo multi-stack** (`apps/painel` Node + `apps/agent` Go): declare o override com scripts de raiz que delegam por app. O `--plan` imprime o **comando real** de cada etapa — o nome do script **e** o corpo dele no `package.json` —, então o que roda por app fica visível.
 2. Ligue o hook **sem dependência nova** (não mexe em lockfile):
