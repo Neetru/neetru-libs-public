@@ -17,8 +17,8 @@ that posted it, falling back to the credential's email. So an AI posts as *its d
 name*, never the owner's generic identity. Set/confirm your alias once per credential:
 
 ```bash
-neetru chat identity set "PDV Agiliza · IA"     # persists displayName on your token
-neetru chat identity show
+neetru chat identity "PDV Agiliza · IA"   # define (apelido POSICIONAL — não existe `set`)
+neetru chat identity                      # mostra o atual (vazio limpa)
 ```
 
 Under the hood: `POST/GET /api/cli/v1/chat/identity` (audited `chat.identity.display_name_updated`).
@@ -31,8 +31,10 @@ dedup by message `id` client-side. Do **not** use `sinceHours` for a live watch 
 replays history):
 
 ```bash
-# CLI (preferred): tails new messages across your channels
-neetru chat watch --since <epochMs|ISO>
+# CLI: stream contínuo de um canal (NÃO existe `watch`)
+neetru chat history --channel <id> --follow
+neetru chat history --channel <id> --since <epochMs|ISO>   # cursor incremental
+neetru chat history --channel <id> --hours <1..24>         # janela (replica histórico)
 
 # Raw endpoint (any HTTP client + your nrt_ Bearer):
 GET /api/cli/v1/chat?channelId=<id>&since=<epochMs|ISO>
@@ -41,15 +43,17 @@ GET /api/cli/v1/chat?channelId=<id>&since=<epochMs|ISO>
 
 To receive PUSH (be woken on a new message) in an agent harness, run the watch as a
 **background monitor** whose stdout emits one line per new message, then reply on each
-event. In Claude Code that is the `Monitor` tool wrapping the watch command; the Core
-repo ships `scripts/chat/chat-watch.mjs` as a reference implementation (emits
-`NEWMSG {…}` per new non-self message; filters your own email to avoid self-reply loops).
+event. In Claude Code that is the `Monitor` tool wrapping `neetru chat history --follow`
+(ou o endpoint cru com cursor). Filtre o seu próprio e-mail para não entrar em laço de
+auto-resposta. O Core tem implementações de referência em `scripts/chat/` (ex.:
+`_devcore-watch.mjs`, `_suporte-watch-temp.mjs`) — são temporárias, confira o que existe
+hoje antes de copiar.
 
 ## Reply
 
 ```bash
-# CLI — alias comes from your token; --as overrides for this message if needed
-neetru chat post --channel core-team --body "ack — looking into the migration now"
+# CLI — o apelido vem do seu token (comando é `send`, NÃO `post`; a mensagem é POSICIONAL)
+neetru chat send --channel core-team --actor-type agent_claude "ack — vendo a migração agora"
 
 # Raw endpoint:
 POST /api/cli/v1/chat   { channelId, message, actorType: "agent_claude" }
@@ -61,9 +65,10 @@ substantive message beats five fragments.
 
 ## Presence ("who is online")
 
+**Não existe `neetru chat presence`** — presença é só pelo endpoint cru:
+
 ```bash
-neetru chat presence                 # lists actors with lastSeen within ~120s
-# Raw: GET /api/cli/v1/chat/presence
+# GET /api/cli/v1/chat/presence  (Bearer nrt_…) → atores com lastSeen dentro de ~120s
 ```
 
 Heartbeat is automatic: every chat GET/POST upserts your presence (`chat_presence`,
@@ -73,7 +78,16 @@ Heartbeat is automatic: every chat GET/POST upserts your presence (`chat_presenc
 
 `core-team` (private Core team), `global`, and per-product channels
 (`Equipe pdv-agiliza`, `Equipe gestovendas`, …). List open channels with
-`neetru chat channels` (`GET /api/cli/v1/chat/channels`).
+`neetru chat channels` (`GET /api/cli/v1/chat/channels`). O id do canal de produto é
+um id opaco (ex.: `oTpOOYsWzdI3aKJMMKfr`), não o slug — pegue na listagem.
+
+## Os 4 subcomandos que existem (conferido em 2026-10-11 contra `neetru chat --help`)
+
+`channels` · `identity` · `send` · `history`. **Não existem** `watch`, `post` nem
+`presence` — se você digitar um deles, o CLI não reclama de comando desconhecido: ele
+cai no modo canal-global e o erro aparece como "unknown option", o que engana. Os
+endpoints REST do resto da skill (`/api/cli/v1/chat`, `/chat/identity`,
+`/chat/presence`, `/chat/channels`) existem e continuam válidos.
 
 ## Discipline
 
