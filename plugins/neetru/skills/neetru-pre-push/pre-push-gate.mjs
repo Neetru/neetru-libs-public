@@ -43,7 +43,7 @@
  *   --plan                    imprime o plano e sai
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -162,15 +162,65 @@ export function toolExists(cmd, env = process.env) {
   return found;
 }
 
-/** Etapas da perna Go (pura). `hasGo=false` vira um aviso, não uma falha. */
-export function planGoSteps(flags = {}, hasGo = true) {
+/**
+ * Etapas da perna Go (pura). `hasGo=false` vira um aviso, não uma falha.
+ *
+ * `goDir` é a pasta onde mora o `go.mod`, relativa à raiz do repo. Em monorepo
+ * aninhado (`apps/agent/go.mod`) o `go vet ./...` precisa rodar LÁ — rodar na
+ * raiz não acha pacote nenhum. O nome da etapa carrega a pasta pra que o
+ * relatório diga ONDE validou: gate que não diz onde rodou não dá pra conferir.
+ */
+export function planGoSteps(flags = {}, hasGo = true, goDir = '.') {
+  const onde = goDir && goDir !== '.' ? ` (${goDir})` : '';
   if (!hasGo) {
-    return [{ name: 'go', skip: 'go não está no PATH — perna Go pulada (instale: https://go.dev/dl/)' }];
+    return [{ name: `go${onde}`, skip: 'go não está no PATH — perna Go pulada (instale: https://go.dev/dl/)' }];
   }
-  const steps = [{ name: 'go vet', cmd: 'go', args: ['vet', './...'] }];
-  if (!flags.fast) steps.push({ name: 'go test', cmd: 'go', args: ['test', './...'] });
-  if (flags.full) steps.push({ name: 'go build', cmd: 'go', args: ['build', './...'] });
+  const cwd = goDir && goDir !== '.' ? goDir : undefined;
+  const steps = [{ name: `go vet${onde}`, cmd: 'go', args: ['vet', './...'], cwd }];
+  if (!flags.fast) steps.push({ name: `go test${onde}`, cmd: 'go', args: ['test', './...'], cwd });
+  if (flags.full) steps.push({ name: `go build${onde}`, cmd: 'go', args: ['build', './...'], cwd });
   return steps;
+}
+
+/** Pastas em que a varredura de `go.mod` nunca entra. */
+export const GO_SCAN_IGNORE = new Set(['node_modules', '.git', 'vendor', 'dist', 'build', '.next', 'testdata']);
+
+/**
+ * Onde está o `go.mod` — raiz, pasta declarada, ou achado em profundidade 1–2.
+ *
+ * bug_e0fb387f, segunda rodada (2026-10-11): a primeira correção olhava só
+ * `<raiz>/go.mod`, então cobria o layout PLANO (go.mod e package.json juntos na
+ * raiz) e deixava de fora justamente o ANINHADO — `apps/agent/go.mod` com a raiz
+ * sem go.mod, que é o caso que originou o bug. A sessão do Zelo pegou isso
+ * conferindo a linha depois que eu já tinha fechado o bug dizendo "monorepo
+ * multi-stack resolvido". Era mais do que foi entregue, e o buraco silencioso
+ * era o próprio sintoma que o bug descrevia.
+ *
+ * Ordem: `neetru.goDir` declarado vence (o repo sabe de si); depois a raiz;
+ * depois varredura rasa. Para na profundidade 2 de propósito — ir mais fundo
+ * convida a achar `go.mod` de dependência vendorizada e validar código de
+ * terceiro no push de alguém.
+ *
+ * Devolve: a pasta (string), `null` quando não há Go nenhum, ou `{ erro }`
+ * quando o repo DECLAROU uma pasta que não tem go.mod — declarado errado é erro
+ * de configuração, não motivo pra cair no palpite e fazer a perna sumir calada.
+ */
+export function findGoDir({ pkg, exists, listDirs }) {
+  const declarado = pkg?.neetru?.goDir;
+  if (typeof declarado === 'string' && declarado.trim()) {
+    const d = declarado.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    return exists(`${d}/go.mod`) ? d : { erro: `neetru.goDir aponta "${d}", mas não há go.mod lá` };
+  }
+  if (exists('go.mod')) return '.';
+  for (const n1 of listDirs('.')) {
+    if (GO_SCAN_IGNORE.has(n1) || n1.startsWith('.')) continue;
+    if (exists(`${n1}/go.mod`)) return n1;
+    for (const n2 of listDirs(n1)) {
+      if (GO_SCAN_IGNORE.has(n2) || n2.startsWith('.')) continue;
+      if (exists(`${n1}/${n2}/go.mod`)) return `${n1}/${n2}`;
+    }
+  }
+  return null;
 }
 
 /** Etapas declaradas em `neetru.prePush` (pura). Honra FAST e FULL igual à auto-detecção. */
@@ -219,13 +269,20 @@ export function describeStep(step) {
  * `neetru.prePush` continua substituindo a auto-detecção por inteiro (o repo
  * assumiu o controle e pode delegar por app), mas agora honra FAST e FULL.
  */
-export function planSteps({ pkg, hasTsconfig, hasGoMod, flags = {}, hasTool = () => true }) {
+export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool = () => true }) {
   const scripts = pkg?.scripts ?? {};
   const override = pkg?.neetru?.prePush;
   if (Array.isArray(override)) return planOverrideSteps(override, scripts, flags);
 
   const steps = planAutoNodeSteps(scripts, hasTsconfig, flags);
-  if (hasGoMod) steps.push(...planGoSteps(flags, hasTool('go')));
+  // `goDir` é o caminho novo; `hasGoMod` segue aceito pra não quebrar chamador
+  // antigo (e os testes que já existiam), valendo como goDir = raiz.
+  const dir = goDir !== undefined ? goDir : (hasGoMod ? '.' : null);
+  if (dir && typeof dir === 'object' && dir.erro) {
+    steps.push({ name: 'go', error: dir.erro });
+  } else if (typeof dir === 'string') {
+    steps.push(...planGoSteps(flags, hasTool('go'), dir));
+  }
   return steps;
 }
 
@@ -298,13 +355,16 @@ function cliVersionOf(cwd, env) {
   return r.status === 0 ? parseCliVersion(r.stdout) : null;
 }
 
-function run({ name, cmd, args }, cwd, env = process.env) {
+function run({ name, cmd, args, cwd: subdir }, cwd, env = process.env) {
   return new Promise((resolve) => {
     const start = Date.now();
     process.stdout.write(`\n[pre-push] -> ${name}\n`);
     // shell:true é necessário no Windows (npm.cmd/npx.cmd); args são nomes de
     // script/flags fixos, sem input do usuário. env sem GIT_DIR & cia (ver sanitizeGitEnv).
-    const child = spawn([cmd, ...args].join(' '), { cwd, stdio: 'inherit', shell: true, env: sanitizeGitEnv(env) });
+    // `subdir` existe pra perna nativa em monorepo aninhado: o `go.mod` pode
+    // morar em apps/agent e `go vet ./...` precisa rodar LA, nao na raiz.
+    const dir = subdir && subdir !== '.' ? path.join(cwd, subdir) : cwd;
+    const child = spawn([cmd, ...args].join(' '), { cwd: dir, stdio: 'inherit', shell: true, env: sanitizeGitEnv(env) });
     child.on('error', () => resolve({ ok: false, ms: Date.now() - start }));
     child.on('exit', (code) => resolve({ ok: code === 0, ms: Date.now() - start }));
   });
@@ -340,7 +400,19 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   const steps = planSteps({
     pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
     hasTsconfig: existsSync(path.join(cwd, 'tsconfig.json')),
-    hasGoMod: existsSync(path.join(cwd, 'go.mod')),
+    goDir: findGoDir({
+      pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
+      exists: (rel) => existsSync(path.join(cwd, rel)),
+      listDirs: (rel) => {
+        try {
+          return readdirSync(path.join(cwd, rel), { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name);
+        } catch {
+          return [];
+        }
+      },
+    }),
     flags,
     hasTool: (cmd) => toolExists(cmd, env),
   });
