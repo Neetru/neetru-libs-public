@@ -17,7 +17,8 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | `NEETRU_SKIP_PREPUSH=1` | Pula tudo — **emergência**, e o motivo vai escrito no corpo do PR |
 | `NEETRU_PREPUSH_FULL=1` | Inclui build (o `next build` pega export ilegal em `route.ts`, `'use server'` exportando não-função — coisas que tsc/vitest não pegam) |
 | `NEETRU_PREPUSH_FAST=1` | Pula testes (só tipos/lint). Para iteração; **não** no push que vira PR |
-| `--plan` | Mostra as etapas e sai, sem executar |
+| `--plan` | Mostra as etapas e sai, sem executar — com o **comando real** de cada uma (e o corpo do script npm), não só o nome |
+| Ferramenta ausente do PATH (`go`, CLI `neetru`) | Etapa **pulada com aviso** (fail-open). Se a ferramenta existe e quebra, **barra o push** (fail-closed) |
 | `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
@@ -45,8 +46,9 @@ O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored
 ## Adotar num repo que não tem (5 min)
 1. Copie `pre-push-gate.mjs` **desta pasta da skill** pra `scripts/pre-push-gate.mjs` do repo. Sem dependências (Node ≥ 18 + git). Detecta a stack:
    - **Node:** script `typecheck`; senão `lint` se for `tsc --noEmit`; senão `npx tsc --noEmit` se houver `tsconfig.json` → `lint` → `docs` (só repo de produto com `docs/**` alterado) → `test` → (`build` em FULL).
-   - **Go** (`go.mod` sem `package.json`): `go vet ./...` → `go test ./...` → (`go build ./...` em FULL).
-   - Override: `package.json` → `"neetru": { "prePush": ["typecheck", "test"] }`.
+   - **Go** (`go.mod` na raiz): `go vet ./...` → `go test ./...` → (`go build ./...` em FULL). **Coexiste com a perna Node** — repo polyglot (`go.mod` + `package.json` na raiz) roda as duas. Sem `go` no PATH a perna sai como **aviso**, não como falha.
+   - Override: `package.json` → `"neetru": { "prePush": ["typecheck", "test"] }`. **Substitui a auto-detecção inteira** (o repo assumiu o controle e pode delegar por app), mas honra FAST (pula `test` e `test:*`) e FULL (acrescenta `build`) igual a ela.
+   - **Monorepo multi-stack** (`apps/painel` Node + `apps/agent` Go): declare o override com scripts de raiz que delegam por app. O `--plan` imprime o **comando real** de cada etapa — o nome do script **e** o corpo dele no `package.json` —, então o que roda por app fica visível.
 2. Ligue o hook **sem dependência nova** (não mexe em lockfile):
    ```sh
    mkdir -p .githooks

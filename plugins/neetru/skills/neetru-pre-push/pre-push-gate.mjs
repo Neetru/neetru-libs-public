@@ -15,6 +15,8 @@
  *     (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE...) — ver sanitizeGitEnv
  *   - repo de PRODUTO (neetru.config.json) com docs/** alterado: etapa docs
  *     (`neetru docs check --changed --offline`); sem a CLI >= 2.31.0, pula com aviso
+ *   - ferramenta ausente do PATH: etapa PULADA com aviso (fail-open). Ferramenta
+ *     presente que quebra: BARRA o push (fail-closed). Ver toolExists.
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
@@ -25,7 +27,12 @@
  *   test       script `test`                  (pulado com NEETRU_PREPUSH_FAST=1)
  *   build      script `build`                 (só com NEETRU_PREPUSH_FULL=1)
  * Etapas (Go — go.mod na raiz): go vet ./... · go test ./... · go build ./... (FULL)
+ *   A perna Go COEXISTE com a Node: repo polyglot (go.mod + package.json na
+ *   raiz) roda as duas. Sem `go` no PATH, a perna sai como aviso, não como falha.
  * Override por repo: package.json -> "neetru": { "prePush": ["typecheck","test"] }
+ *   O override SUBSTITUI a auto-detecção inteira (Node e Go) — o repo assumiu o
+ *   controle e pode delegar por app — mas honra FAST (pula `test`/`test:*`) e
+ *   FULL (acrescenta `build`) igual a ela. `--plan` imprime o comando real.
  *
  * Flags (env ou CLI):
  *   NEETRU_SKIP_PREPUSH=1     pula tudo (emergência — declare no PR)
@@ -114,34 +121,111 @@ export function parseFlags(argv = [], env = {}) {
   };
 }
 
-const npmRun = (script) => ({ name: script, cmd: 'npm', args: ['run', '--silent', script] });
+/**
+ * Etapa `npm run <script>`. `detail` carrega o CORPO do script no package.json
+ * porque o `--plan` imprimia só o nome e escondia o que de fato roda — num
+ * monorepo multi-stack isso tornava o contorno invisível (bug_e0fb387f).
+ */
+const npmRun = (script, scripts = {}) => ({
+  name: script,
+  cmd: 'npm',
+  args: ['run', '--silent', script],
+  detail: typeof scripts?.[script] === 'string' ? scripts[script] : undefined,
+});
 
-/** Plano puro (testável): recebe o que existe no repo, devolve as etapas. */
-export function planSteps({ pkg, hasTsconfig, hasGoMod, flags }) {
-  if (hasGoMod && !pkg) {
-    const steps = [{ name: 'go vet', cmd: 'go', args: ['vet', './...'] }];
-    if (!flags.fast) steps.push({ name: 'go test', cmd: 'go', args: ['test', './...'] });
-    if (flags.full) steps.push({ name: 'go build', cmd: 'go', args: ['build', './...'] });
-    return steps;
+/** Nome de etapa que conta como "teste" pro NEETRU_PREPUSH_FAST (`test`, `test:unit`, ...). */
+export const isTestStepName = (name) => /^test(:|$)/.test(String(name ?? ''));
+
+/**
+ * O executável existe no PATH?
+ *
+ * FAIL-OPEN de propósito: se a própria sondagem não der resposta confiável
+ * (erro de spawn, status não-numérico, SO exótico) devolvemos `true` e a etapa
+ * roda. Pular validação por engano é pior do que rodar à toa — e quando a
+ * ferramenta EXISTE e quebra, a etapa barra o push normalmente (fail-closed).
+ * Antes disso, sem `go` no PATH a etapa saía != 0 e BARRAVA o push de um repo
+ * que nem é Go, sem explicar por quê (bug_e0fb387f).
+ */
+const toolCache = new Map();
+export function toolExists(cmd, env = process.env) {
+  if (toolCache.has(cmd)) return toolCache.get(cmd);
+  let found = true;
+  try {
+    // `where` (Windows) e `command -v` (POSIX) saem 1 quando o binário não existe.
+    const probe = process.platform === 'win32' ? `where ${cmd}` : `command -v ${cmd}`;
+    const r = spawnSync(probe, { shell: true, stdio: 'ignore', env: sanitizeGitEnv(env) });
+    found = r.error || typeof r.status !== 'number' ? true : r.status === 0;
+  } catch {
+    found = true;
   }
+  toolCache.set(cmd, found);
+  return found;
+}
 
-  const scripts = pkg?.scripts ?? {};
-  const override = pkg?.neetru?.prePush;
-  if (Array.isArray(override)) {
-    return override
-      .filter((s) => !(flags.fast && s === 'test'))
-      .map((s) => (scripts[s] ? npmRun(s) : { name: s, error: `script "${s}" não existe no package.json` }));
+/** Etapas da perna Go (pura). `hasGo=false` vira um aviso, não uma falha. */
+export function planGoSteps(flags = {}, hasGo = true) {
+  if (!hasGo) {
+    return [{ name: 'go', skip: 'go não está no PATH — perna Go pulada (instale: https://go.dev/dl/)' }];
   }
+  const steps = [{ name: 'go vet', cmd: 'go', args: ['vet', './...'] }];
+  if (!flags.fast) steps.push({ name: 'go test', cmd: 'go', args: ['test', './...'] });
+  if (flags.full) steps.push({ name: 'go build', cmd: 'go', args: ['build', './...'] });
+  return steps;
+}
 
+/** Etapas declaradas em `neetru.prePush` (pura). Honra FAST e FULL igual à auto-detecção. */
+export function planOverrideSteps(override, scripts = {}, flags = {}) {
+  const steps = override
+    .filter((s) => !(flags.fast && isTestStepName(s)))
+    .map((s) => (scripts[s] ? npmRun(s, scripts) : { name: s, error: `script "${s}" não existe no package.json` }));
+  // FULL só existia no caminho da auto-detecção: o override retornava cedo e
+  // nunca ganhava o build (bug_e0fb387f). Só acrescenta se o repo não listou.
+  if (flags.full && scripts.build && !override.includes('build')) steps.push(npmRun('build', scripts));
+  return steps;
+}
+
+/** Etapas da perna Node por auto-detecção (pura). */
+export function planAutoNodeSteps(scripts = {}, hasTsconfig = false, flags = {}) {
   const steps = [];
   const lintIsTsc = /^tsc\b.*--noEmit/.test(scripts.lint ?? '');
-  if (scripts.typecheck) steps.push(npmRun('typecheck'));
-  else if (lintIsTsc) steps.push({ ...npmRun('lint'), name: 'typecheck (lint)' });
+  if (scripts.typecheck) steps.push(npmRun('typecheck', scripts));
+  else if (lintIsTsc) steps.push({ ...npmRun('lint', scripts), name: 'typecheck (lint)' });
   else if (hasTsconfig) steps.push({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] });
 
-  if (scripts.lint && !(lintIsTsc && !scripts.typecheck)) steps.push(npmRun('lint'));
-  if (scripts.test && !flags.fast) steps.push(npmRun('test'));
-  if (scripts.build && flags.full) steps.push(npmRun('build'));
+  if (scripts.lint && !(lintIsTsc && !scripts.typecheck)) steps.push(npmRun('lint', scripts));
+  if (scripts.test && !flags.fast) steps.push(npmRun('test', scripts));
+  if (scripts.build && flags.full) steps.push(npmRun('build', scripts));
+  return steps;
+}
+
+/** Linha do `--plan`: nome + comando REAL (+ corpo do script npm, quando houver). */
+export function describeStep(step) {
+  if (step.error) return `${step.name}  !! ${step.error}`;
+  if (step.skip) return `${step.name}  (pulada) ${step.skip}`;
+  const cmd = [step.cmd, ...(step.args ?? [])].join(' ');
+  return step.detail ? `${step.name}  ${cmd}  ->  ${step.detail}` : `${step.name}  ${cmd}`;
+}
+
+/**
+ * Plano puro (testável): recebe o que existe no repo, devolve as etapas.
+ *
+ * `hasTool(cmd)` diz se o binário está no PATH; é injetável pra teste e o
+ * default `() => true` mantém a função determinística quando o teste não liga.
+ *
+ * bug_e0fb387f: a perna Go era `hasGoMod && !pkg`, então criar o package.json
+ * de raiz — justamente a correção recomendada pra monorepo multi-stack —
+ * DESLIGAVA a perna Go inteira, sem aviso nenhum. Agora as duas coexistem: um
+ * repo com go.mod E package.json na raiz valida os dois lados. O override
+ * `neetru.prePush` continua substituindo a auto-detecção por inteiro (o repo
+ * assumiu o controle e pode delegar por app), mas agora honra FAST e FULL.
+ */
+export function planSteps({ pkg, hasTsconfig, hasGoMod, flags = {}, hasTool = () => true }) {
+  const scripts = pkg?.scripts ?? {};
+  const override = pkg?.neetru?.prePush;
+  if (Array.isArray(override)) return planOverrideSteps(override, scripts, flags);
+
+  const steps = planAutoNodeSteps(scripts, hasTsconfig, flags);
+  if (hasGoMod) steps.push(...planGoSteps(flags, hasTool('go')));
   return steps;
 }
 
@@ -258,6 +342,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     hasTsconfig: existsSync(path.join(cwd, 'tsconfig.json')),
     hasGoMod: existsSync(path.join(cwd, 'go.mod')),
     flags,
+    hasTool: (cmd) => toolExists(cmd, env),
   });
 
   // Etapa docs (repo de produto): entra depois do lint e antes dos testes.
@@ -279,7 +364,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   }
 
   process.stdout.write(`[pre-push] gate Neetru — ${steps.map((s) => s.name).join(' -> ') || '(nenhuma etapa)'}\n`);
-  if (flags.plan) return 0;
+  if (flags.plan) {
+    // O resumo acima só tem nomes de script; num monorepo isso esconde o que
+    // roda por app (bug_e0fb387f). Aqui vai o comando real de cada etapa.
+    for (const s of steps) process.stdout.write(`[pre-push]   ${describeStep(s)}\n`);
+    return 0;
+  }
   if (steps.length === 0) {
     process.stderr.write('[pre-push] nenhuma etapa detectada — configure "neetru.prePush" no package.json.\n');
     return 1;
