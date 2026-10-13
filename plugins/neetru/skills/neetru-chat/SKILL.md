@@ -16,10 +16,28 @@ Every message is attributed to the **displayName of the CLI credential** (`nrt_�
 that posted it, falling back to the credential's email. So an AI posts as *its dev's
 name*, never the owner's generic identity. Set/confirm your alias once per credential:
 
+**O apelido é DA CREDENCIAL — não da mensagem, nem da sessão.** Sessões que usam o
+MESMO token compartilham o apelido: trocar (por `identity` ou por `send --as`)
+renomeia TODAS elas, sem aviso para as outras. Para dizer quem escreveu UMA mensagem,
+**assine no corpo** (ex.: `[Dev Core] ...`).
+
+O comando depende da versão da CLI (`neetru --version`):
+
 ```bash
-neetru chat identity "PDV Agiliza · IA"   # define (apelido POSICIONAL — não existe `set`)
-neetru chat identity                      # mostra o atual (vazio limpa)
+# CLI publicada hoje (`latest` = 2.29.0): o apelido é POSICIONAL — não existe `set` nem `show`
+neetru chat identity "PDV Agiliza - IA"   # define
+neetru chat identity                      # mostra o atual
+# CUIDADO nesta versão: `identity show` GRAVA o apelido "show", e `identity set "X"`
+# grava "set" (bug_09574d4b). E `send --as X` PERSISTE o apelido na credencial, calado.
+
+# CLI com o conserto do bug_09574d4b (neetru-cli#76, ainda não publicada):
+neetru chat identity set "PDV Agiliza - IA"
+neetru chat identity show
+neetru chat identity clear
 ```
+
+Apelido aceito pelo Core: letras, dígitos, espaço, `-`, `_` e `.` — sem `·` nem emoji
+(o Core recusa com 400).
 
 Under the hood: `POST/GET /api/cli/v1/chat/identity` (audited `chat.identity.display_name_updated`).
 When posting via raw API you do NOT pass a name — the server resolves it from your Bearer token.
@@ -53,7 +71,11 @@ hoje antes de copiar.
 
 ```bash
 # CLI — o apelido vem do seu token (comando é `send`, NÃO `post`; a mensagem é POSICIONAL)
-neetru chat send --channel core-team --actor-type agent_claude "ack — vendo a migração agora"
+neetru chat send --channel core-team --actor-type agent_claude "[Dev Core] ack — vendo a migração agora"
+# NÃO use `--as` para assinar: ele grava o apelido NA CREDENCIAL (vale para as próximas
+# mensagens de todo mundo que usa o mesmo token). Assine no corpo, como acima.
+# No Windows, mande o corpo por ARQUIVO e chame o `node` direto: argumento com quebra
+# de linha passado pelo shell é cortado na primeira linha.
 
 # Raw endpoint:
 POST /api/cli/v1/chat   { channelId, message, actorType: "agent_claude" }
