@@ -269,6 +269,56 @@ export function describeStep(step) {
  * `neetru.prePush` continua substituindo a auto-detecção por inteiro (o repo
  * assumiu o controle e pode delegar por app), mas agora honra FAST e FULL.
  */
+/**
+ * Arquivos RASTREADOS que sumiram do disco e que ninguém mandou sumir.
+ *
+ * Lê `git status --porcelain=v1`. Cada linha tem dois caracteres de estado:
+ * o do índice e o da árvore de trabalho. Só interessa ` D` — apagado na árvore
+ * e NÃO preparado (staged). `D ` é remoção deliberada, já no índice; `DD`/`UD`
+ * são conflito de merge; nenhum dos dois é dano silencioso.
+ *
+ * POR QUE ISTO EXISTE (incidente 2026-10-12, neetru-libs):
+ * uma limpeza de `node_modules` num repo com npm workspaces apagou 94 arquivos
+ * de `packages/*` — 14.258 linhas de FONTE. Em workspaces, `node_modules/@escopo/*`
+ * são links para `packages/*`, e uma remoção que SEGUE links (o
+ * `Remove-Item -Recurse` do PowerShell 5.1 faz isso com junction) leva o alvo
+ * junto. O dano ficou invisível até o build quebrar, longe da causa.
+ *
+ * A guarda de `node_modules` ausente/vazio não pega este caso: `node_modules`
+ * pode estar perfeito enquanto a fonte evaporou.
+ */
+export function parseDeletedTracked(statusText = '') {
+  return statusText
+    .split('\n')
+    .filter((l) => l.startsWith(' D '))
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean);
+}
+
+/**
+ * Texto do aviso. Separado da detecção para ser testável sem tocar em git.
+ *
+ * É AVISO, nunca aborto: o que está apagado na árvore de trabalho e não foi
+ * preparado NÃO faz parte deste push — os commits que sobem podem estar
+ * perfeitos. Barrar aqui travaria um push legítimo por um estado que ele nem
+ * envia. O gate grita e segue; quem decide é quem está olhando.
+ */
+export function describeDeletedTracked(arquivos = [], limite = 5) {
+  if (arquivos.length === 0) return '';
+  const amostra = arquivos.slice(0, limite);
+  const resto = arquivos.length - amostra.length;
+  return (
+    `\n[pre-push] ATENÇÃO: ${arquivos.length} arquivo(s) rastreado(s) sumiram do disco e nenhum está preparado.\n` +
+    amostra.map((f) => `[pre-push]   - ${f}\n`).join('') +
+    (resto > 0 ? `[pre-push]   … e mais ${resto}\n` : '') +
+    '[pre-push] Isso costuma ser DANO, não trabalho: em repo com workspaces, remover\n' +
+    '[pre-push] node_modules seguindo links apaga a fonte em packages/*. Confira antes de seguir.\n' +
+    '[pre-push] Era intencional? `git add -A` prepara as remoções e este aviso some.\n' +
+    '[pre-push] Foi acidente? `git restore .` traz os arquivos de volta.\n' +
+    '[pre-push] (aviso apenas — o push NÃO foi barrado por isto)\n'
+  );
+}
+
 export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool = () => true }) {
   const scripts = pkg?.scripts ?? {};
   const override = pkg?.neetru?.prePush;
@@ -394,6 +444,20 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     process.stderr.write('[pre-push] push direto pra main/master BLOQUEADO (fluxo: branch -> PR -> merge).\n');
     process.stderr.write('[pre-push] emergência consciente: NEETRU_ALLOW_MAIN_PUSH=1 git push ...\n');
     return 1;
+  }
+
+  // Dano silencioso: fonte apagada do disco sem ninguem ter mandado.
+  // Avisa e segue — ver describeDeletedTracked para o porque de nao abortar.
+  try {
+    const st = spawnSync('git', ['status', '--porcelain=v1'], {
+      cwd, encoding: 'utf8', env: sanitizeGitEnv(env),
+    });
+    if (st.status === 0) {
+      const aviso = describeDeletedTracked(parseDeletedTracked(st.stdout || ''));
+      if (aviso) process.stdout.write(aviso);
+    }
+  } catch {
+    // git indisponivel nao pode derrubar o gate: o aviso e um extra, nao uma etapa.
   }
 
   const pkgPath = path.join(cwd, 'package.json');
