@@ -402,7 +402,7 @@ export function describeDeletedTracked(arquivos = [], limite = 5) {
     `${p}   todos, só no Git Bash/sh:       ${RESTAURAR_APAGADOS_SH}`,
     `${p}   No PowerShell, não passe a lista ao git por pipe (corrompe o caminho): use um por um.`,
     `${p}   NÃO use \`git restore .\`: ele desfaz também toda edição não salva da árvore.`,
-    `${p} Era intencional? \`git rm -- <caminho>\` prepara só aquela remoção (pasta: git rm -r -- <pasta>).`,
+    `${p} Era intencional? \`git rm -- <caminho>\` prepara só aquela remoção, arquivo por arquivo.`,
     `${p} (aviso apenas — o push NÃO foi barrado por isto)`,
     '',
   ].join('\n');
