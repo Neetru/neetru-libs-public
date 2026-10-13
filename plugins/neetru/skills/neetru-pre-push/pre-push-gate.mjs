@@ -18,7 +18,8 @@
  *   - ferramenta ausente do PATH: etapa PULADA com aviso (fail-open). Ferramenta
  *     presente que quebra: BARRA o push (fail-closed). Ver toolExists.
  *   - arquivo rastreado apagado do disco sem a remoção preparada: AVISO, nunca
- *     barra; o aviso diz como restaurar SÓ ele. Ver describeDeletedTracked.
+ *     barra; o aviso diz como restaurar SÓ ele e volta resumido na linha do
+ *     OK final. Ver describeDeletedTracked e lembreteApagados.
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
@@ -301,23 +302,38 @@ export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTo
 // pode estar perfeito enquanto a fonte evaporou.
 
 /**
- * Restaura SÓ os arquivos rastreados que sumiram do disco, todos de uma vez.
+ * Os comandos que o aviso manda rodar. Os testes rodam ESTES textos, do jeito
+ * que alguém digitaria, no Git Bash e no PowerShell.
  *
- * Sintaxe POSIX: roda no Git Bash/sh, NÃO no PowerShell. No PowerShell 5.1,
- * passar a lista para o git por pipe quebra de dois jeitos (testado em
- * 2026-10-13): o caminho com acento chega escapado em octal e não casa com
- * arquivo nenhum, e o `--pathspec-from-file=-` recebe um BOM grudado no
- * primeiro caminho e recusa a lista inteira. Lá, vale `git restore -- <caminho>`.
+ * `--literal-pathspecs` em todo `restore`/`rm`: depois do `--` o git lê o
+ * caminho como PADRÃO, não como nome. `app/[id]/page.tsx` (rota do Next.js)
+ * casa com `app/i/` e `app/d/`: sem o flag, o `restore` joga fora a edição não
+ * salva desses irmãos e o `rm` APAGA do disco os que estão intactos (testado em
+ * 2026-10-13, git 2.53). É a mesma classe de dano do `git restore .`.
  *
- * `-z`/`-0`: caminho com espaço ou acento passa cru. `--ignore-unmerged`: um
- * conflito de merge na lista (o `ls-files -d` lista, e até repete) não derruba
- * a restauração dos outros — sem ele o `git restore` recusa TUDO.
+ * `restaurarTodos` roda IGUAL no Git Bash e no PowerShell: o alias `!` é
+ * executado pelo sh do próprio git, então o pipe acontece lá dentro. Passar a
+ * lista por pipe do PowerShell 5.1 para o git quebra de dois jeitos: caminho
+ * com acento chega em octal, e o `--pathspec-from-file=-` ganha um BOM no 1º
+ * caminho e recusa a lista. O alias roda na raiz do repo, de qualquer subpasta.
+ *   `-z`/`-0`: caminho com espaço ou acento passa cru.
+ *   `--ignore-unmerged`: um conflito de merge na lista (o `ls-files -d` lista,
+ *   e até repete) não derruba o resto — sem ele o `git restore` recusa TUDO.
+ *
+ * `'<caminho>'` vai entre aspas simples: sem elas, `<` é operador reservado no
+ * PowerShell, e caminho com espaço vira dois argumentos.
  *
  * NUNCA `git restore .`: ele volta a árvore inteira ao índice e joga fora toda
  * edição não preparada, não só os apagados. E o aviso aparece justamente
  * quando alguém acabou de perder arquivo, num clone que várias sessões editam.
  */
-export const RESTAURAR_APAGADOS_SH = 'git ls-files -d -z | xargs -0 git restore --ignore-unmerged --';
+export const COMANDOS_APAGADOS = Object.freeze({
+  listar: 'git -c core.quotePath=false ls-files -d',
+  restaurarTodos:
+    "git -c 'alias.restaura-apagados=!git ls-files -d -z | xargs -0 git --literal-pathspecs restore --ignore-unmerged --' restaura-apagados",
+  restaurarUm: "git --literal-pathspecs restore -- '<caminho>'",
+  removerUm: "git --literal-pathspecs rm -- '<caminho>'",
+});
 
 /**
  * Arquivos RASTREADOS que sumiram do disco sem a remoção estar preparada.
@@ -381,31 +397,46 @@ export function listDeletedTracked(cwd, env = process.env) {
  * envia. O gate grita e segue; quem decide é quem está olhando.
  *
  * O conselho não pode criar um dano novo: restaura SÓ o que sumiu (nunca
- * `git restore .`) e, se a remoção era intencional, prepara só ela — nem
- * `git add -A`, que põe arquivo não rastreado (um `.env`) no índice, nem
- * `git add -u`, que leva junto a edição não salva de outra sessão.
+ * `git restore .`) e, se a remoção era intencional, prepara só ela, um por um —
+ * nem `git add -A`, que põe arquivo não rastreado (um `.env`) no índice, nem
+ * `git add -u`, que leva junto a edição não salva de outra sessão e resolve
+ * conflito de merge calado, nem `git rm -r <pasta>`, que apaga também o que
+ * está intacto. Remover é o caminho de exceção: uma IA que "resolve o aviso"
+ * com `git rm` deixa o dano preparado para o próximo commit.
  */
 export function describeDeletedTracked(arquivos = [], limite = 5) {
   if (arquivos.length === 0) return '';
   const amostra = arquivos.slice(0, limite);
   const resto = arquivos.length - amostra.length;
   const p = '[pre-push]';
+  const c = COMANDOS_APAGADOS;
   return [
     '',
     `${p} ATENÇÃO: ${arquivos.length} arquivo(s) rastreado(s) sumiram do disco sem a remoção estar preparada.`,
     ...amostra.map((f) => `${p}   - ${f}`),
-    ...(resto > 0 ? [`${p}   … e mais ${resto} (lista completa: git ls-files -d)`] : []),
+    ...(resto > 0 ? [`${p}   … e mais ${resto} (lista completa: ${c.listar})`] : []),
     `${p} Isso costuma ser DANO, não trabalho: em repo com workspaces, remover`,
     `${p} node_modules seguindo links apaga a fonte em packages/*. Confira antes de seguir.`,
-    `${p} Foi acidente? Restaure SÓ o que sumiu:`,
-    `${p}   um arquivo, em qualquer shell:  git restore -- <caminho>`,
-    `${p}   todos, só no Git Bash/sh:       ${RESTAURAR_APAGADOS_SH}`,
-    `${p}   No PowerShell, não passe a lista ao git por pipe (corrompe o caminho): use um por um.`,
+    `${p} Restaure SÓ o que sumiu — todos de uma vez, no Git Bash ou no PowerShell, de qualquer pasta do repo:`,
+    `${p}   ${c.restaurarTodos}`,
+    `${p}   um arquivo só, na raiz do repo: ${c.restaurarUm}`,
     `${p}   NÃO use \`git restore .\`: ele desfaz também toda edição não salva da árvore.`,
-    `${p} Era intencional? \`git rm -- <caminho>\` prepara só aquela remoção, arquivo por arquivo.`,
+    `${p} Só se VOCÊ apagou de propósito e quer a remoção no próximo commit, um por um:`,
+    `${p}   ${c.removerUm}`,
+    `${p}   Na dúvida, restaure: remover deixa o dano preparado para o próximo commit.`,
     `${p} (aviso apenas — o push NÃO foi barrado por isto)`,
     '',
   ].join('\n');
+}
+
+/**
+ * Lembrete que vai NA MESMA LINHA do `[pre-push] OK` final. O aviso completo
+ * sai antes das etapas e some na saída delas (no gate da loja, linha 2 de
+ * 169); quem empurra com `| tail` só vê a última linha. Vazio quando não há
+ * nada apagado.
+ */
+export function lembreteApagados(n = 0) {
+  return n > 0 ? ` | ATENÇÃO: ${n} arquivo(s) rastreado(s) sumiram do disco (ver aviso acima; o push não foi barrado)` : '';
 }
 
 // ─── etapa docs (template v3) ────────────────────────────────────────────────
@@ -520,9 +551,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
 
   // Dano silencioso: fonte apagada do disco sem ninguém ter mandado.
   // AVISA e segue — ver describeDeletedTracked para o porquê de não abortar.
+  let apagados = 0;
   try {
-    const aviso = describeDeletedTracked(listDeletedTracked(cwd, env) ?? []);
+    const lista = listDeletedTracked(cwd, env) ?? [];
+    const aviso = describeDeletedTracked(lista);
     if (aviso) process.stdout.write(aviso);
+    apagados = lista.length;
   } catch {
     // o aviso é um extra, não uma etapa: nada aqui pode derrubar o gate.
   }
@@ -596,7 +630,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
       return 1;
     }
   }
-  process.stdout.write(`\n[pre-push] OK — ${done.join(' | ')}\n`);
+  process.stdout.write(`\n[pre-push] OK — ${done.join(' | ')}${lembreteApagados(apagados)}\n`);
   return 0;
 }
 
