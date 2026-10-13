@@ -18,8 +18,9 @@
  *   - ferramenta ausente do PATH: etapa PULADA com aviso (fail-open). Ferramenta
  *     presente que quebra: BARRA o push (fail-closed). Ver toolExists.
  *   - arquivo rastreado apagado do disco sem a remoção preparada: AVISO, nunca
- *     barra; o aviso diz como restaurar SÓ ele e volta resumido na linha do
- *     OK final. Ver describeDeletedTracked e lembreteApagados.
+ *     barra; o aviso diz como restaurar SÓ ele e volta resumido na última
+ *     linha (OK, FALHOU ou ABORTADO). Ver describeDeletedTracked e
+ *     lembreteApagados.
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
@@ -414,10 +415,15 @@ export function describeDeletedTracked(arquivos = [], limite = 5) {
     '',
     `${p} ATENÇÃO: ${arquivos.length} arquivo(s) rastreado(s) sumiram do disco sem a remoção estar preparada.`,
     ...amostra.map((f) => `${p}   - ${f}`),
-    ...(resto > 0 ? [`${p}   … e mais ${resto} (lista completa: ${c.listar})`] : []),
+    ...(resto > 0
+      ? [
+          `${p}   … e mais ${resto}. Lista completa: ${c.listar}`,
+          `${p}   (ela mostra também os conflitos de merge, às vezes repetidos; o aviso deixa os conflitos de fora)`,
+        ]
+      : []),
     `${p} Isso costuma ser DANO, não trabalho: em repo com workspaces, remover`,
     `${p} node_modules seguindo links apaga a fonte em packages/*. Confira antes de seguir.`,
-    `${p} Restaure SÓ o que sumiu — todos de uma vez, no Git Bash ou no PowerShell, de qualquer pasta do repo:`,
+    `${p} Restaure SÓ o que sumiu — todos de uma vez, no Git Bash ou no PowerShell (no cmd.exe não roda), de qualquer pasta do repo:`,
     `${p}   ${c.restaurarTodos}`,
     `${p}   um arquivo só, na raiz do repo: ${c.restaurarUm}`,
     `${p}   NÃO use \`git restore .\`: ele desfaz também toda edição não salva da árvore.`,
@@ -430,13 +436,21 @@ export function describeDeletedTracked(arquivos = [], limite = 5) {
 }
 
 /**
- * Lembrete que vai NA MESMA LINHA do `[pre-push] OK` final. O aviso completo
- * sai antes das etapas e some na saída delas (no gate da loja, linha 2 de
- * 169); quem empurra com `| tail` só vê a última linha. Vazio quando não há
- * nada apagado.
+ * Lembrete que vai NA MESMA LINHA da última linha do gate: o `[pre-push] OK`
+ * e também o `FALHOU …`/`ABORTADO em …`. O aviso completo sai antes das etapas
+ * e some na saída delas (no gate da loja, linha 2 de 169); quem empurra com
+ * `| tail` só vê a última linha. Vazio quando não há nada apagado.
+ *
+ * `falhou`: no incidente que originou o aviso, a fonte some, o typecheck
+ * quebra e o gate ABORTA. Aí o lembrete aponta o aviso como causa provável:
+ * sem ele, quem lê "ABORTADO" vai caçar erro no código.
  */
-export function lembreteApagados(n = 0) {
-  return n > 0 ? ` | ATENÇÃO: ${n} arquivo(s) rastreado(s) sumiram do disco (ver aviso acima; o push não foi barrado)` : '';
+export function lembreteApagados(n = 0, { falhou = false } = {}) {
+  if (!(n > 0)) return '';
+  const base = ` | ATENÇÃO: ${n} arquivo(s) rastreado(s) sumiram do disco`;
+  return falhou
+    ? `${base} — pode ser a causa desta falha (ver aviso acima)`
+    : `${base} (ver aviso acima; o push não foi barrado)`;
 }
 
 // ─── etapa docs (template v3) ────────────────────────────────────────────────
@@ -607,15 +621,18 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     for (const s of steps) process.stdout.write(`[pre-push]   ${describeStep(s)}\n`);
     return 0;
   }
+  // Toda saída com falha também carrega o lembrete: no incidente que originou
+  // o aviso, é justamente por aqui que o gate sai (a fonte some, o typecheck quebra).
+  const lembreteFalha = lembreteApagados(apagados, { falhou: true });
   if (steps.length === 0) {
-    process.stderr.write('[pre-push] nenhuma etapa detectada — configure "neetru.prePush" no package.json.\n');
+    process.stderr.write(`[pre-push] nenhuma etapa detectada — configure "neetru.prePush" no package.json.${lembreteFalha}\n`);
     return 1;
   }
 
   const done = [];
   for (const step of steps) {
     if (step.error) {
-      process.stderr.write(`[pre-push] FALHOU ${step.name}: ${step.error}\n`);
+      process.stderr.write(`[pre-push] FALHOU ${step.name}: ${step.error}${lembreteFalha}\n`);
       return 1;
     }
     if (step.skip) {
@@ -626,7 +643,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     const r = await run(step, cwd, env);
     done.push(`${step.name} ${(r.ms / 1000).toFixed(1)}s`);
     if (!r.ok) {
-      process.stderr.write(`\n[pre-push] ABORTADO em "${step.name}". Nada foi enviado.\n`);
+      process.stderr.write(`\n[pre-push] ABORTADO em "${step.name}". Nada foi enviado.${lembreteFalha}\n`);
       return 1;
     }
   }
