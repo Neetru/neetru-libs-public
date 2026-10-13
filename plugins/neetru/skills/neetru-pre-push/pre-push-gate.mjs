@@ -17,6 +17,8 @@
  *     (`neetru docs check --changed --offline`); sem a CLI >= 2.31.0, pula com aviso
  *   - ferramenta ausente do PATH: etapa PULADA com aviso (fail-open). Ferramenta
  *     presente que quebra: BARRA o push (fail-closed). Ver toolExists.
+ *   - arquivo rastreado apagado do disco sem a remoção preparada: AVISO, nunca
+ *     barra; o aviso diz como restaurar SÓ ele. Ver describeDeletedTracked.
  *
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
@@ -269,56 +271,6 @@ export function describeStep(step) {
  * `neetru.prePush` continua substituindo a auto-detecção por inteiro (o repo
  * assumiu o controle e pode delegar por app), mas agora honra FAST e FULL.
  */
-/**
- * Arquivos RASTREADOS que sumiram do disco e que ninguém mandou sumir.
- *
- * Lê `git status --porcelain=v1`. Cada linha tem dois caracteres de estado:
- * o do índice e o da árvore de trabalho. Só interessa ` D` — apagado na árvore
- * e NÃO preparado (staged). `D ` é remoção deliberada, já no índice; `DD`/`UD`
- * são conflito de merge; nenhum dos dois é dano silencioso.
- *
- * POR QUE ISTO EXISTE (incidente 2026-10-12, neetru-libs):
- * uma limpeza de `node_modules` num repo com npm workspaces apagou 94 arquivos
- * de `packages/*` — 14.258 linhas de FONTE. Em workspaces, `node_modules/@escopo/*`
- * são links para `packages/*`, e uma remoção que SEGUE links (o
- * `Remove-Item -Recurse` do PowerShell 5.1 faz isso com junction) leva o alvo
- * junto. O dano ficou invisível até o build quebrar, longe da causa.
- *
- * A guarda de `node_modules` ausente/vazio não pega este caso: `node_modules`
- * pode estar perfeito enquanto a fonte evaporou.
- */
-export function parseDeletedTracked(statusText = '') {
-  return statusText
-    .split('\n')
-    .filter((l) => l.startsWith(' D '))
-    .map((l) => l.slice(3).trim())
-    .filter(Boolean);
-}
-
-/**
- * Texto do aviso. Separado da detecção para ser testável sem tocar em git.
- *
- * É AVISO, nunca aborto: o que está apagado na árvore de trabalho e não foi
- * preparado NÃO faz parte deste push — os commits que sobem podem estar
- * perfeitos. Barrar aqui travaria um push legítimo por um estado que ele nem
- * envia. O gate grita e segue; quem decide é quem está olhando.
- */
-export function describeDeletedTracked(arquivos = [], limite = 5) {
-  if (arquivos.length === 0) return '';
-  const amostra = arquivos.slice(0, limite);
-  const resto = arquivos.length - amostra.length;
-  return (
-    `\n[pre-push] ATENÇÃO: ${arquivos.length} arquivo(s) rastreado(s) sumiram do disco e nenhum está preparado.\n` +
-    amostra.map((f) => `[pre-push]   - ${f}\n`).join('') +
-    (resto > 0 ? `[pre-push]   … e mais ${resto}\n` : '') +
-    '[pre-push] Isso costuma ser DANO, não trabalho: em repo com workspaces, remover\n' +
-    '[pre-push] node_modules seguindo links apaga a fonte em packages/*. Confira antes de seguir.\n' +
-    '[pre-push] Era intencional? `git add -A` prepara as remoções e este aviso some.\n' +
-    '[pre-push] Foi acidente? `git restore .` traz os arquivos de volta.\n' +
-    '[pre-push] (aviso apenas — o push NÃO foi barrado por isto)\n'
-  );
-}
-
 export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool = () => true }) {
   const scripts = pkg?.scripts ?? {};
   const override = pkg?.neetru?.prePush;
@@ -334,6 +286,126 @@ export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTo
     steps.push(...planGoSteps(flags, hasTool('go'), dir));
   }
   return steps;
+}
+
+// ─── aviso: fonte rastreada apagada do disco ─────────────────────────────────
+//
+// POR QUE ISTO EXISTE (incidente 2026-10-12, neetru-libs):
+// uma limpeza de `node_modules` num repo com npm workspaces apagou 94 arquivos
+// de `packages/*` — 14.258 linhas de FONTE. Em workspaces, `node_modules/@escopo/*`
+// são links para `packages/*`, e uma remoção que SEGUE links (o
+// `Remove-Item -Recurse` do PowerShell 5.1 faz isso com junction) leva o alvo
+// junto. O dano ficou invisível até o build quebrar, longe da causa.
+//
+// A guarda de `node_modules` ausente/vazio não pega este caso: `node_modules`
+// pode estar perfeito enquanto a fonte evaporou.
+
+/**
+ * Restaura SÓ os arquivos rastreados que sumiram do disco, todos de uma vez.
+ *
+ * Sintaxe POSIX: roda no Git Bash/sh, NÃO no PowerShell. No PowerShell 5.1,
+ * passar a lista para o git por pipe quebra de dois jeitos (testado em
+ * 2026-10-13): o caminho com acento chega escapado em octal e não casa com
+ * arquivo nenhum, e o `--pathspec-from-file=-` recebe um BOM grudado no
+ * primeiro caminho e recusa a lista inteira. Lá, vale `git restore -- <caminho>`.
+ *
+ * `-z`/`-0`: caminho com espaço ou acento passa cru. `--ignore-unmerged`: um
+ * conflito de merge na lista (o `ls-files -d` lista, e até repete) não derruba
+ * a restauração dos outros — sem ele o `git restore` recusa TUDO.
+ *
+ * NUNCA `git restore .`: ele volta a árvore inteira ao índice e joga fora toda
+ * edição não preparada, não só os apagados. E o aviso aparece justamente
+ * quando alguém acabou de perder arquivo, num clone que várias sessões editam.
+ */
+export const RESTAURAR_APAGADOS_SH = 'git ls-files -d -z | xargs -0 git restore --ignore-unmerged --';
+
+/**
+ * Arquivos RASTREADOS que sumiram do disco sem a remoção estar preparada.
+ *
+ * Lê `git status --porcelain=v1 -z`: entradas `XY caminho` terminadas em NUL,
+ * X = estado no índice, Y = na árvore de trabalho. Com `-z` o caminho vem cru,
+ * sem aspas nem octal para espaço e acento. Num rename/cópia (R ou C em X ou
+ * Y), o campo seguinte é o caminho de ORIGEM, não outra entrada.
+ *
+ * Entra todo Y = `D` (sumiu da árvore e a remoção não está no índice):
+ *   ` D` rastreado e apagado; `MD`/`AD`/`RD` tinha mudança preparada e depois
+ *   sumiu — o disco perdeu o arquivo do mesmo jeito.
+ * Fica de fora:
+ *   `D ` remoção deliberada, já no índice (Y não é `D`);
+ *   `DD`/`UD` conflito de merge. Não é dano silencioso: o git já os mostra como
+ *   não resolvidos e recusa o commit até alguém decidir, e a saída é resolver
+ *   o merge (`git rm`/`git add`), não restaurar — `git restore` recusa caminho
+ *   em conflito. No `UD` (o outro lado apagou) a nossa versão segue no disco:
+ *   nada sumiu.
+ */
+export function parseDeletedTracked(statusZ = '') {
+  const campos = String(statusZ).split('\0');
+  const apagados = [];
+  for (let i = 0; i < campos.length; i++) {
+    const campo = campos[i];
+    if (campo.length < 4) continue; // "XY " + caminho; o último campo vem vazio
+    const [x, y] = campo;
+    if ('RC'.includes(x) || 'RC'.includes(y)) i++; // pula a origem do rename/cópia
+    if (y === 'D' && x !== 'D' && x !== 'U') apagados.push(campo.slice(3));
+  }
+  return apagados;
+}
+
+/**
+ * Roda o `git status` e devolve os apagados (`parseDeletedTracked`), ou `null`
+ * se o git não respondeu. Nunca lança: o aviso é um extra, não uma etapa.
+ *
+ * `--no-optional-locks`: o status não regrava o índice, então não disputa
+ * `index.lock` com outra sessão no mesmo clone. `--untracked-files=no`: o que
+ * não é rastreado não interessa aqui, e varrer custa.
+ */
+export function listDeletedTracked(cwd, env = process.env) {
+  try {
+    const r = spawnSync('git', ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=no'], {
+      cwd,
+      encoding: 'utf8',
+      env: sanitizeGitEnv(env),
+    });
+    return r.status === 0 ? parseDeletedTracked(r.stdout || '') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Texto do aviso. Separado da detecção para ser testável sem tocar em git.
+ *
+ * É AVISO, nunca aborto: o que está apagado na árvore de trabalho e não foi
+ * preparado NÃO faz parte deste push — os commits que sobem podem estar
+ * perfeitos. Barrar aqui travaria um push legítimo por um estado que ele nem
+ * envia. O gate grita e segue; quem decide é quem está olhando.
+ *
+ * O conselho não pode criar um dano novo: restaura SÓ o que sumiu (nunca
+ * `git restore .`) e, se a remoção era intencional, prepara só ela — nem
+ * `git add -A`, que põe arquivo não rastreado (um `.env`) no índice, nem
+ * `git add -u`, que leva junto a edição não salva de outra sessão.
+ */
+export function describeDeletedTracked(arquivos = [], limite = 5) {
+  if (arquivos.length === 0) return '';
+  const amostra = arquivos.slice(0, limite);
+  const resto = arquivos.length - amostra.length;
+  const p = '[pre-push]';
+  return [
+    '',
+    `${p} ATENÇÃO: ${arquivos.length} arquivo(s) rastreado(s) sumiram do disco sem a remoção estar preparada.`,
+    ...amostra.map((f) => `${p}   - ${f}`),
+    ...(resto > 0 ? [`${p}   … e mais ${resto} (lista completa: git ls-files -d)`] : []),
+    `${p} Isso costuma ser DANO, não trabalho: em repo com workspaces, remover`,
+    `${p} node_modules seguindo links apaga a fonte em packages/*. Confira antes de seguir.`,
+    `${p} Foi acidente? Restaure SÓ o que sumiu:`,
+    `${p}   um arquivo, em qualquer shell:  git restore -- <caminho>`,
+    `${p}   todos, só no Git Bash/sh:       ${RESTAURAR_APAGADOS_SH}`,
+    `${p}   No PowerShell, não passe a lista ao git por pipe (corrompe o caminho): use um por um.`,
+    `${p}   NÃO use \`git restore .\`: ele desfaz também toda edição não salva da árvore.`,
+    `${p} Era intencional? \`git rm -- <caminho>\` prepara só aquela remoção (pasta: git rm -r -- <pasta>).`,
+    `${p} (aviso apenas — o push NÃO foi barrado por isto)`,
+    '',
+  ].join('\n');
 }
 
 // ─── etapa docs (template v3) ────────────────────────────────────────────────
@@ -446,18 +518,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     return 1;
   }
 
-  // Dano silencioso: fonte apagada do disco sem ninguem ter mandado.
-  // Avisa e segue — ver describeDeletedTracked para o porque de nao abortar.
+  // Dano silencioso: fonte apagada do disco sem ninguém ter mandado.
+  // AVISA e segue — ver describeDeletedTracked para o porquê de não abortar.
   try {
-    const st = spawnSync('git', ['status', '--porcelain=v1'], {
-      cwd, encoding: 'utf8', env: sanitizeGitEnv(env),
-    });
-    if (st.status === 0) {
-      const aviso = describeDeletedTracked(parseDeletedTracked(st.stdout || ''));
-      if (aviso) process.stdout.write(aviso);
-    }
+    const aviso = describeDeletedTracked(listDeletedTracked(cwd, env) ?? []);
+    if (aviso) process.stdout.write(aviso);
   } catch {
-    // git indisponivel nao pode derrubar o gate: o aviso e um extra, nao uma etapa.
+    // o aviso é um extra, não uma etapa: nada aqui pode derrubar o gate.
   }
 
   const pkgPath = path.join(cwd, 'package.json');

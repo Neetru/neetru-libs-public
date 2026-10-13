@@ -19,6 +19,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | `NEETRU_PREPUSH_FAST=1` | Pula testes (só tipos/lint). Para iteração; **não** no push que vira PR |
 | `--plan` | Mostra as etapas e sai, sem executar — com o **comando real** de cada uma (e o corpo do script npm), não só o nome |
 | Ferramenta ausente do PATH (`go`, CLI `neetru`) | Etapa **pulada com aviso** (fail-open). Se a ferramenta existe e quebra, **barra o push** (fail-closed) |
+| Arquivo rastreado apagado do disco sem a remoção preparada (` D`, `MD`, `AD`) | **Aviso, nunca barra.** Lista os arquivos e manda restaurar **só eles** (`git restore -- <caminho>`). **Nunca** `git restore .`: ele joga fora toda edição não salva da árvore |
 | `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
