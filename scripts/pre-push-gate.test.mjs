@@ -19,9 +19,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { ehExecucaoDireta } from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const raiz = path.resolve(aqui, '..');
@@ -48,4 +51,44 @@ test('o template é o arquivo que a skill neetru-pre-push manda copiar', () => {
     /pre-push-gate\.mjs/,
     'a SKILL.md deixou de citar o pre-push-gate.mjs — a trava perdeu o referente',
   );
+});
+
+// ─── P73-gates: a guarda "sou o main?" sem realpath ──────────────────────────
+//
+// Porta aberta sistêmica: a guarda antiga comparava só com `path.resolve`, sem
+// `realpath`. Chamado por um caminho que passa por uma junction/symlink
+// (convenção da casa pra repo novo: pasta em `S:` com junction em
+// `Documents`), o `import.meta.url` tinha o real resolvido pelo loader do Node
+// mas o `argv[1]` não, o guard dava falso e o gate saía 0 CALADO, sem rodar
+// etapa nenhuma. `ehExecucaoDireta` compara pelo caminho REAL dos dois lados
+// (mesmo padrão do `ehExecucaoDireta` do neetru-core, scripts/lib/execucao-direta.mjs).
+
+test('ehExecucaoDireta', async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), 'neetru-p73-junction-'));
+  const real = path.join(base, 'pasta real');
+  const link = path.join(base, 'pasta pelo link');
+  const arquivo = path.join(real, 'script.mjs');
+  mkdirSync(real, { recursive: true });
+  writeFileSync(arquivo, '// sonda\n');
+  symlinkSync(real, link, 'junction');
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const metaUrl = pathToFileURL(arquivo).href;
+
+  await t.test('pelo caminho real: true', () => {
+    assert.equal(ehExecucaoDireta(metaUrl, arquivo), true);
+  });
+
+  await t.test('pelo caminho que passa pela junction: true (antes dava false e o gate saía 0 calado)', () => {
+    assert.equal(ehExecucaoDireta(metaUrl, path.join(link, 'script.mjs')), true);
+  });
+
+  await t.test('outro arquivo: false', () => {
+    assert.equal(ehExecucaoDireta(metaUrl, path.join(real, 'outro.mjs')), false);
+  });
+
+  await t.test('sem argv[1] (import por teste, REPL): false', () => {
+    assert.equal(ehExecucaoDireta(metaUrl, undefined), false);
+    assert.equal(ehExecucaoDireta(metaUrl, ''), false);
+  });
 });
