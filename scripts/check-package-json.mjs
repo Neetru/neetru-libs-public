@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Fim de linha LF obrigatório (.gitattributes: *.mjs text eol=lf): com CRLF,
+// o shebang acima quebra o import deste arquivo pelo vite/vitest.
 /**
  * check-package-json.mjs — trava de publish dos pacotes @neetru/*.
  *

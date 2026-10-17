@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Fim de linha LF obrigatório (trave no .gitattributes): com CRLF, o shebang
+// acima quebra o import deste arquivo pelo vite/vitest.
 /**
  * pre-push-gate.mjs — gate de pré-push PADRÃO do ecossistema Neetru (portátil).
  *
@@ -47,7 +49,7 @@
  *   --plan                    imprime o plano e sai
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -651,7 +653,35 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * O script foi chamado DIRETO pelo node (e não importado por um teste)?
+ *
+ * Compara pelo caminho REAL dos dois lados. O loader do Node resolve
+ * link/junction no `import.meta.url`, mas o `argv[1]` chega como foi digitado.
+ * Só com `path.resolve` (sem realpath): chamado por um caminho que passa por
+ * uma junction — convenção da casa pra repo novo é pasta em `S:` com junction
+ * em `Documents` — o real do `import.meta.url` diferia do resolved do
+ * `argv[1]` e o gate saía 0 CALADO, sem rodar etapa nenhuma (porta aberta
+ * sistêmica P73-gates; mesmo padrão do `ehExecucaoDireta` do neetru-core,
+ * scripts/lib/execucao-direta.mjs).
+ */
+function caminhoReal(p) {
+  const absoluto = path.resolve(p);
+  let real;
+  try {
+    real = realpathSync(absoluto);
+  } catch {
+    real = absoluto; // arquivo que ainda não existe: compara como veio
+  }
+  return process.platform === 'win32' ? real.toLowerCase() : real;
+}
+
+export function ehExecucaoDireta(metaUrl, argv1 = process.argv[1]) {
+  if (!argv1) return false;
+  return caminhoReal(argv1) === caminhoReal(fileURLToPath(metaUrl));
+}
+
+if (ehExecucaoDireta(import.meta.url)) {
   main().then((c) => process.exit(c), (e) => {
     process.stderr.write(`[pre-push] erro inesperado: ${e?.stack ?? e}\n`);
     process.exit(1);
