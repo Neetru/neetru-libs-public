@@ -143,6 +143,24 @@ const npmRun = (script, scripts = {}) => ({
 export const isTestStepName = (name) => /^test(:|$)/.test(String(name ?? ''));
 
 /**
+ * Etapa de teste ou build, Node ou Go, com ou sem o sufixo do diretório:
+ * `test`, `test:ci`, `build`, `go test`, `go test (apps/agent)`, `go build (apps/agent)`.
+ */
+export const isTestOrBuildStepName = (name) => /^(go )?(test|build)(:|\s|$)/.test(String(name ?? ''));
+
+/**
+ * Onde a etapa docs entra (pura): depois do lint e ANTES do primeiro teste ou
+ * build; sem nenhum, no fim. O regex antigo casava só o nome exato
+ * (`test`, `go test`, `build`): com go.mod aninhado a etapa se chama
+ * `go test (apps/agent)` e, com override, `test:ci` — e a docs ia pro fim,
+ * depois dos testes, contra o que o contrato promete.
+ */
+export function posicaoDaEtapaDocs(steps = []) {
+  const at = steps.findIndex((st) => isTestOrBuildStepName(st?.name));
+  return at < 0 ? steps.length : at;
+}
+
+/**
  * O executável existe no PATH?
  *
  * FAIL-OPEN de propósito: se a própria sondagem não der resposta confiável
@@ -610,10 +628,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     const changed = pushedFiles(refs, cwd, env);
     const touches = !Array.isArray(changed) || changed.some((f) => f.startsWith(`${docsRootOf(config)}/`));
     const docs = touches ? planDocsStep({ config, changedFiles: changed, cliVersion: cliVersionOf(cwd, env), flags }) : null;
-    if (docs) {
-      const at = steps.findIndex((st) => /^(test|go test|build)$/.test(st.name));
-      steps.splice(at < 0 ? steps.length : at, 0, docs);
-    }
+    if (docs) steps.splice(posicaoDaEtapaDocs(steps), 0, docs);
   }
 
   process.stdout.write(`[pre-push] gate Neetru — ${steps.map((s) => s.name).join(' -> ') || '(nenhuma etapa)'}\n`);
