@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Fim de linha LF obrigatório (trave no .gitattributes): com CRLF, o shebang
+// acima quebra o import deste arquivo pelo vite/vitest.
 /**
  * pre-push-gate.mjs — gate de pré-push PADRÃO do ecossistema Neetru (portátil).
  *
