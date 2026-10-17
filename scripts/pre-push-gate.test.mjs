@@ -26,7 +26,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { ehExecucaoDireta, sanitizeGitEnv } from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
+import {
+  ehExecucaoDireta,
+  planGoSteps,
+  posicaoDaEtapaDocs,
+  sanitizeGitEnv,
+} from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const raiz = path.resolve(aqui, '..');
@@ -154,4 +159,54 @@ test('SKILL.md: o passo Adotar grava em LF o hook E o gate copiado, mesmo com co
     assert.ok(disco.startsWith('#!'), `${rel} sem shebang: o teste não está medindo o que diz`);
     assert.equal(disco.includes('\r\n'), false, `${rel} saiu em CRLF: o passo Adotar não trava esse arquivo em LF`);
   }
+});
+
+// ─── etapa docs: entra antes do primeiro teste ou build ─────────────────────
+const nomes = (lista) => lista.map((name) => ({ name }));
+
+test('docs: Node — antes do test', () => {
+  assert.equal(posicaoDaEtapaDocs(nomes(['typecheck', 'lint', 'test', 'build'])), 2);
+});
+
+test('docs: Go na raiz — antes do go test', () => {
+  assert.equal(posicaoDaEtapaDocs(planGoSteps({}, true, '.')), 1);
+});
+
+test('docs: Go aninhado — antes do go test (apps/agent), não no fim', () => {
+  const passos = planGoSteps({ full: true }, true, 'apps/agent');
+  assert.deepEqual(passos.map((s) => s.name), ['go vet (apps/agent)', 'go test (apps/agent)', 'go build (apps/agent)']);
+  assert.equal(posicaoDaEtapaDocs(passos), 1);
+});
+
+test('docs: Node + Go aninhado — antes do primeiro teste, o do Node', () => {
+  const passos = [...nomes(['typecheck', 'lint', 'test']), ...planGoSteps({}, true, 'apps/agent')];
+  assert.equal(posicaoDaEtapaDocs(passos), 2);
+});
+
+test('docs: override com test:ci — antes dele', () => {
+  assert.equal(posicaoDaEtapaDocs(nomes(['lint', 'test:ci'])), 1);
+});
+
+test('docs: sem teste nem build (FAST) — no fim', () => {
+  const passos = [...nomes(['typecheck', 'lint']), ...planGoSteps({ fast: true }, true, 'apps/agent')];
+  assert.equal(posicaoDaEtapaDocs(passos), passos.length);
+  assert.equal(posicaoDaEtapaDocs([]), 0);
+});
+
+test('docs: nome que só começa parecido não conta', () => {
+  assert.equal(posicaoDaEtapaDocs(nomes(['typecheck (lint)', 'testes-manuais', 'buildx', 'lint'])), 4);
+});
+
+test('docs: o gate usa posicaoDaEtapaDocs (amarração; nada de regex solto)', () => {
+  for (const rel of ['../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs', 'pre-push-gate.mjs']) {
+    const fonte = readFileSync(path.join(aqui, rel), 'utf8');
+    assert.ok(fonte.includes('steps.splice(posicaoDaEtapaDocs(steps), 0, docs)'), `${rel}: a etapa docs não passa por posicaoDaEtapaDocs`);
+    assert.ok(!/findIndex\(\(st\) => \/\^\(test\|go test\|build\)\$\//.test(fonte), `${rel}: sobrou o regex antigo`);
+  }
+});
+
+test('docs: as duas cópias do gate são idênticas', () => {
+  const a = readFileSync(path.join(aqui, '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs'), 'utf8');
+  const b = readFileSync(path.join(aqui, 'pre-push-gate.mjs'), 'utf8');
+  assert.equal(a, b);
 });
