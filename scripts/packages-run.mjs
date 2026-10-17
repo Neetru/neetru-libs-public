@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Fim de linha LF obrigatório (.gitattributes: *.mjs text eol=lf): com CRLF,
+// o shebang acima quebra o import deste arquivo pelo vite/vitest.
 /**
  * packages-run.mjs — roda uma etapa do gate de pre-push em TODOS os pacotes
  * de `packages/*` (monorepo de libs Neetru).

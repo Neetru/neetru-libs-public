@@ -1,3 +1,21 @@
 # Hooks de git rodam pelo sh: com core.autocrlf=true (Windows) o checkout
 # grava CRLF e o shebang vira "sh<CR>", quebrando o hook. Força LF.
 .githooks/* text eol=lf
+
+# Todo .mjs em LF. Os scripts com shebang ("#!/usr/bin/env node") não podem
+# sair em CRLF: com "#!...\r\n" o vite não reconhece o shebang (o hashbangRE
+# dele é /^#!.*\n/, e o "." não casa "\r"), não o tira do código, e o import do
+# arquivo pelo vitest morre em "SyntaxError: Invalid or unexpected token".
+# Medido no item P73-gates (Neetru/neetru-sdk#47). Aqui os testes de scripts/
+# rodam em node --test, que tolera o CRLF; a regra fecha a porta antes que um
+# teste em vitest passe a importar um desses scripts — inclusive o template
+# do gate (plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs), que a
+# skill manda copiar para repos que testam com vitest.
+#
+# ARMADILHA: a regra só vale para arquivo que o git ESCREVE. Ao trocar de
+# commit, o git só reescreve no disco o arquivo cujo blob mudou; arquivo com o
+# mesmo conteúdo nas duas pontas fica com o CRLF de antes, com ou sem regra.
+# Por isso o PR que criou esta regra mudou o conteúdo de todo .mjs com shebang
+# que ele não tocava. .mjs sem shebang pode seguir CRLF num clone antigo sem
+# dano: acrescentar um shebang já muda o conteúdo e força a reescrita em LF.
+*.mjs text eol=lf
