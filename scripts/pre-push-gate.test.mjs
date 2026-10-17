@@ -19,12 +19,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { ehExecucaoDireta } from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
+import { ehExecucaoDireta, sanitizeGitEnv } from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const raiz = path.resolve(aqui, '..');
@@ -91,4 +93,65 @@ test('ehExecucaoDireta', async (t) => {
     assert.equal(ehExecucaoDireta(metaUrl, undefined), false);
     assert.equal(ehExecucaoDireta(metaUrl, ''), false);
   });
+});
+
+// ─── P73-gates (rodada final 2): o passo "Adotar" trava em LF o gate copiado ─
+//
+// O template começa com shebang e diz "Fim de linha LF obrigatório (trave no
+// .gitattributes)". Mas o passo "Adotar num repo que não tem" da SKILL.md só
+// mandava travar `.githooks/*`. Repo que adota o gate no Windows
+// (core.autocrlf=true) ao pé da letra recebia `scripts/pre-push-gate.mjs` em
+// CRLF no checkout, e todo teste em vitest que importasse o gate morria em
+// "SyntaxError: Invalid or unexpected token" (o vite não reconhece
+// "#!...\r\n" como shebang — medido em Neetru/neetru-sdk#47). Mesma trava do
+// repo fonte (Neetru/neetru-libs, scripts/pre-push-gate.test.mjs): a loja é
+// quem entrega a skill, então confere ela mesma o que entrega.
+
+/** Linhas que o passo "Adotar" da SKILL.md manda acrescentar ao .gitattributes. */
+function linhasGitattributesDoAdotar(skill) {
+  const ini = skill.indexOf('## Adotar num repo que não tem');
+  assert.ok(ini >= 0, 'SKILL.md perdeu a seção "Adotar num repo que não tem"');
+  const fim = skill.indexOf('\n## ', ini + 1);
+  const secao = skill.slice(ini, fim < 0 ? undefined : fim);
+  return [...secao.matchAll(/printf '([^']*)' >> \.gitattributes/g)].map((m) => m[1].replace(/\\n/g, '\n'));
+}
+
+test('SKILL.md: o passo Adotar grava em LF o hook E o gate copiado, mesmo com core.autocrlf=true', (t) => {
+  const linhas = linhasGitattributesDoAdotar(ler('plugins/neetru/skills/neetru-pre-push/SKILL.md'));
+  assert.ok(linhas.length > 0, 'o passo Adotar não acrescenta nada ao .gitattributes');
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'neetru-adotar-'));
+  // fs.promises.rm, não rmSync: no Node 24 (Windows) o rmSync não apaga caminho com acento.
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 3 }));
+  // Sem GIT_DIR & cia: rodando dentro do hook, o git herdaria o repo do push.
+  const env = sanitizeGitEnv(process.env);
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  const escrever = (rel, conteudo) => {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), conteudo);
+  };
+  git('init', '-q');
+  git('config', 'user.email', 'gate@teste.invalid');
+  git('config', 'user.name', 'gate-teste');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'core.autocrlf', 'true'); // padrão do Git no Windows
+  git('config', 'core.safecrlf', 'false'); // o aviso de conversão não interessa aqui
+  escrever('.gitattributes', linhas.join(''));
+  escrever('scripts/pre-push-gate.mjs', ler(TEMPLATE));
+  escrever('.githooks/pre-push', '#!/usr/bin/env sh\nexec node "$(dirname "$0")/../scripts/pre-push-gate.mjs" "$@"\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'adota o gate');
+
+  // Clone novo de quem chega depois: o checkout grava o arquivo do zero.
+  for (const rel of ['.githooks/pre-push', 'scripts/pre-push-gate.mjs']) {
+    unlinkSync(path.join(dir, rel));
+    assert.equal(existsSync(path.join(dir, rel)), false, `não apagou ${rel}`);
+    git('checkout', '--', rel);
+    const disco = readFileSync(path.join(dir, rel), 'utf8');
+    assert.ok(disco.startsWith('#!'), `${rel} sem shebang: o teste não está medindo o que diz`);
+    assert.equal(disco.includes('\r\n'), false, `${rel} saiu em CRLF: o passo Adotar não trava esse arquivo em LF`);
+  }
 });

@@ -65,9 +65,11 @@ O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored
    printf '#!/usr/bin/env sh\nexec node "$(dirname "$0")/../scripts/pre-push-gate.mjs" "$@"\n' > .githooks/pre-push
    git update-index --add --chmod=+x .githooks/pre-push   # Windows não guarda +x sozinho
    printf '.githooks/* text eol=lf\n' >> .gitattributes     # hook sempre com LF
+   printf 'scripts/*.mjs text eol=lf\n' >> .gitattributes   # gate copiado sempre com LF
    git config core.hooksPath .githooks
    ```
    - **`.gitattributes` com `.githooks/* text eol=lf` é obrigatório:** em máquina com `core.autocrlf=true` (padrão do Git no Windows) o checkout grava o hook com CRLF, o shebang vira `sh\r` e o hook quebra.
+   - **`scripts/*.mjs text eol=lf` também é obrigatório:** o gate começa com shebang (`#!/usr/bin/env node`). Com `core.autocrlf=true` o checkout grava `#!...\r\n`, o vite não reconhece o shebang e todo teste em vitest que importe `scripts/pre-push-gate.mjs` morre em `SyntaxError: Invalid or unexpected token` (medido em Neetru/neetru-sdk#47). Repo que já tem `* text=auto eol=lf` está coberto. Confira depois do `git add`: `git ls-files --eol scripts/pre-push-gate.mjs` tem que mostrar `eol=lf` na coluna `attr/` e `w/lf` (a cópia no disco; se der `w/crlf`, o arquivo copiado já veio com CRLF — apague e rode `git checkout -- scripts/pre-push-gate.mjs` depois do commit).
    - No `package.json`, o `prepare` liga o gate pra quem clona e roda `npm install`. Use a forma **portátil** — só age se existir `.git` (arquivo ou pasta, então funciona em worktree) e nunca falha:
      ```json
      "prepare": "node -e \"try{if(require('fs').existsSync('.git'))require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'],{stdio:'ignore'})}catch{}\""
