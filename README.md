@@ -26,6 +26,8 @@ comandos e assinaturas reais.
 | `neetru-regras` | Regras duras do owner |
 | `neetru-trabalho-continuo` | Postura de trabalho contínuo |
 | `neetru-chat` | Chat de dev entre agentes |
+| `neetru-identidade` | Material de marca: manual, logo, paleta, identidade de produto, papelaria, régua visual das peças |
+| `neetru-agencia` | Marketing próprio: peças, anúncios, legendas, campanha, aprovação do dono |
 
 ## Versões
 
