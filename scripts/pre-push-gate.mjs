@@ -24,6 +24,9 @@
  *     linha (OK, FALHOU ou ABORTADO). Ver describeDeletedTracked e
  *     lembreteApagados.
  *
+ * Etapa licencas (primeira, NO PROCESSO, sem rede — ver etapaDeLicencas): AGPL, SSPL
+ *   ou GPL fora de dev nos package-lock.json rastreados BARRA o push; em repo
+ *   distribuído ("neetru": { "licencas": { "distribuido": true } }) a LGPL também.
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
  *              senão `npx tsc --noEmit` se existir tsconfig.json
@@ -46,6 +49,7 @@
  *   NEETRU_PREPUSH_FAST=1     pula testes
  *   NEETRU_ALLOW_MAIN_PUSH=1  permite push direto pra main/master
  *   NEETRU_PREPUSH_NO_DOCS=1  pula só a etapa docs (declare no PR)
+ *   NEETRU_PREPUSH_NO_LICENCAS=1  pula só a etapa licencas (declare no PR)
  *   --plan                    imprime o plano e sai
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -123,6 +127,7 @@ export function parseFlags(argv = [], env = {}) {
     fast: env.NEETRU_PREPUSH_FAST === '1' || has('--fast'),
     allowMain: env.NEETRU_ALLOW_MAIN_PUSH === '1',
     noDocs: env.NEETRU_PREPUSH_NO_DOCS === '1',
+    noLicencas: env.NEETRU_PREPUSH_NO_LICENCAS === '1',
     plan: has('--plan'),
   };
 }
@@ -512,6 +517,180 @@ export function planDocsStep({ config, changedFiles, cliVersion, flags }) {
   return { name: 'docs', cmd: 'neetru', args: ['docs', 'check', '--changed', '--offline'] };
 }
 
+// ─── Licenças (wi_ace1aaaa, 31/10/2026) ──────────────────────────────────────
+//
+// Pedido do dono depois da auditoria de 29/10 (laudo em
+// neetru-assessoria/auditoria-licencas-2026-10-29): 0 AGPL, 0 SSPL e 0 GPL no que
+// roda na plataforma. Esta etapa impede que entre. Roda NO PROCESSO, sem rede e
+// sem instalar nada: lê o campo `license` de cada pacote dos package-lock.json
+// rastreados pelo git. Licença vazia no lockfile vira AVISO, nunca bloqueio — o
+// pre-push não pode depender do registro do npm.
+//
+//   BARRA:   AGPL, SSPL e GPL fora de dev. Em repo DISTRIBUÍDO (o cliente recebe
+//            o código — "neetru": { "licencas": { "distribuido": true } }), a LGPL
+//            fora de dev também.
+//   AVISA:   copyleft forte só em dev; copyleft fraco (LGPL, MPL, EPL…); fonte
+//            disponível restrita (BUSL, Elastic, Commons Clause…); sem licença
+//            declarada; licença que a regra não reconhece.
+//   EXCEÇÃO: "neetru": { "licencas": { "permitir": { "<pacote>": "<motivo>" } } }
+//            — a chave é `pacote` ou `pacote@versão`; motivo vazio não vale.
+//   PULAR:   NEETRU_PREPUSH_NO_LICENCAS=1 (declare no PR).
+// Só npm: yarn.lock e pnpm-lock.yaml não são lidos.
+
+const PERMISSIVAS = ['MIT', 'APACHE', 'BSD', 'ISC', '0BSD', 'UNLICENSE', 'CC0', 'ZLIB', 'WTFPL', 'PUBLIC DOMAIN',
+  'PYTHON', 'BLUEOAK', 'CC-BY-3', 'CC-BY-4', 'ARTISTIC', 'X11', 'PSF', 'MIT-0', 'BOOST', 'HPND'];
+const COPYLEFT_FRACO = ['MPL', 'EPL', 'CDDL', 'EUPL', 'CC-BY-SA', 'OSL'];
+const RESTRITAS = ['BUSL', 'BSL-1.1', 'ELASTIC', 'COMMONS CLAUSE', 'POLYFORM', 'CC-BY-NC'];
+const COPYLEFT_FORTE = ['AGPL', 'SSPL', 'GPL'];
+
+/**
+ * Classe de uma expressão de licença (pura). Mesma régua do licencas_repo.py do
+ * laudo, com UMA diferença: o OR é lido ANTES da AGPL/SSPL — "MIT OR AGPL-3.0" é
+ * dupla licença, e quem usa escolhe a MIT. No laudo isso contava como AGPL.
+ */
+export function classeDaLicenca(lic) {
+  const l = String(lic ?? '').toUpperCase().trim();
+  if (!l || l === 'UNKNOWN' || l === 'NONE' || l.startsWith('SEE LICENSE IN')) return 'sem-licenca-declarada';
+  if (l === 'UNLICENSED') return 'proprietaria-propria';
+  if (/\sOR\s/.test(l)) {
+    const opcoes = l.split(/\sOR\s/).map((p) => classeDaLicenca(p.replace(/^[\s()]+|[\s()]+$/g, '')));
+    for (const pref of ['permissiva', 'proprietaria-propria', 'copyleft-fraco', 'fonte-disponivel-restrita', 'GPL', 'AGPL', 'SSPL']) {
+      if (opcoes.includes(pref)) return pref;
+    }
+  }
+  if (l.includes('AGPL')) return 'AGPL';
+  if (l.includes('SSPL')) return 'SSPL';
+  if (/\bLGPL/.test(l)) return 'copyleft-fraco';
+  if (/\bGPL/.test(l)) return 'GPL';
+  if (COPYLEFT_FRACO.some((k) => l.includes(k))) return 'copyleft-fraco';
+  if (RESTRITAS.some((k) => l.includes(k))) return 'fonte-disponivel-restrita';
+  if (PERMISSIVAS.some((k) => l.includes(k))) return 'permissiva';
+  return 'outra';
+}
+
+/** O campo `license` do lockfile vem como texto, objeto ({ type }) ou lista. */
+export function textoDaLicenca(v) {
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) return v.map(textoDaLicenca).filter(Boolean).join(' OR ');
+  if (v && typeof v === 'object') return typeof v.type === 'string' ? v.type : '';
+  return '';
+}
+
+/** Pacotes instalados de um package-lock.json (v2/v3), sem os links de workspace. */
+export function pacotesDoLock(lock, caminho = 'package-lock.json') {
+  const out = [];
+  for (const [chave, info] of Object.entries(lock?.packages ?? {})) {
+    if (!chave || !chave.includes('node_modules/') || !info || info.link) continue;
+    out.push({
+      pacote: info.name || chave.split('node_modules/').pop(),
+      versao: String(info.version ?? ''),
+      licenca: textoDaLicenca(info.license),
+      dev: Boolean(info.dev || info.devOptional),
+      lock: caminho,
+    });
+  }
+  return out;
+}
+
+/**
+ * Julgamento (puro): o que barra e o que só avisa. O mesmo pacote@versão em
+ * vários lockfiles conta uma vez — e conta como "roda" se roda em algum deles.
+ */
+export function julgarLicencas(pacotes = [], { distribuido = false, permitir = {} } = {}) {
+  const unicos = new Map();
+  for (const p of pacotes) {
+    const k = `${p.pacote}@${p.versao}`;
+    const antes = unicos.get(k);
+    if (!antes) unicos.set(k, { ...p });
+    else if (!p.dev) antes.dev = false;
+  }
+  const regras = permitir && typeof permitir === 'object' && !Array.isArray(permitir) ? permitir : {};
+  const bloqueios = [];
+  const avisos = [];
+  for (const p of unicos.values()) {
+    const classe = classeDaLicenca(p.licenca);
+    if (classe === 'permissiva' || classe === 'proprietaria-propria') continue;
+    const item = { ...p, classe };
+    const barra = !p.dev && (COPYLEFT_FORTE.includes(classe) || (distribuido === true && /LGPL/i.test(p.licenca)));
+    const motivo = regras[`${p.pacote}@${p.versao}`] ?? regras[p.pacote];
+    if (barra && typeof motivo === 'string' && motivo.trim()) avisos.push({ ...item, permitido: motivo.trim() });
+    else (barra ? bloqueios : avisos).push(item);
+  }
+  // Por gravidade (o que mais pede atenção primeiro), depois por nome.
+  const GRAVIDADE = ['AGPL', 'SSPL', 'GPL', 'fonte-disponivel-restrita', 'outra', 'copyleft-fraco', 'sem-licenca-declarada'];
+  const ordem = (a, b) => GRAVIDADE.indexOf(a.classe) - GRAVIDADE.indexOf(b.classe) || a.pacote.localeCompare(b.pacote);
+  return { total: unicos.size, bloqueios: bloqueios.sort(ordem), avisos: avisos.sort(ordem) };
+}
+
+/**
+ * Texto do resultado (puro). Linha a linha só o que pede atenção; "sem licença no
+ * lockfile" (entrada antiga — o npm antigo não gravava o campo) e copyleft fraco
+ * só em dev viram UMA linha de contagem cada. O resto é cortado em `limite`.
+ */
+export function relatorioDeLicencas({ total, bloqueios, avisos }, nLocks = 1, limite = 12) {
+  const linha = (p) => {
+    const extra = p.permitido ? ` — PERMITIDO: ${p.permitido}` : p.dev ? ' (só dev)' : '';
+    return `[${p.classe}] ${p.pacote}@${p.versao} — ${p.licenca || '(vazio no lockfile)'}${extra} · ${p.lock}`;
+  };
+  const semLicenca = avisos.filter((p) => p.classe === 'sem-licenca-declarada');
+  const fracoDev = avisos.filter((p) => p.classe === 'copyleft-fraco' && p.dev && !p.permitido);
+  const atencao = avisos.filter((p) => !semLicenca.includes(p) && !fracoDev.includes(p));
+  let t = `\n[pre-push] licencas: ${total} pacote(s) em ${nLocks} lockfile(s) — ${bloqueios.length} barrado(s), ${avisos.length} aviso(s)\n`;
+  for (const p of bloqueios) t += `[pre-push]   BARRADO ${linha(p)}\n`;
+  for (const p of atencao.slice(0, limite)) t += `[pre-push]   aviso ${linha(p)}\n`;
+  if (atencao.length > limite) t += `[pre-push]   … e mais ${atencao.length - limite} aviso(s) como esses\n`;
+  if (fracoDev.length) t += `[pre-push]   aviso: ${fracoDev.length} pacote(s) de copyleft fraco só em dev\n`;
+  if (semLicenca.length) {
+    t += `[pre-push]   aviso: ${semLicenca.length} pacote(s) sem licença no lockfile (entrada antiga; confira no npm se precisar)\n`;
+  }
+  if (bloqueios.length) {
+    t += '[pre-push] AGPL, SSPL e GPL não entram no que roda (em repo distribuído, nem LGPL). Troque o pacote;\n';
+    t += '[pre-push] exceção só com motivo: package.json → "neetru": { "licencas": { "permitir": { "<pacote>": "<motivo>" } } }\n';
+  }
+  return t;
+}
+
+/** package-lock.json rastreados pelo git (relativos à raiz). null = o git falhou. */
+export function lockfilesRastreados(cwd, env = process.env) {
+  const out = gitOut(cwd, ['ls-files', '-z'], env);
+  if (out === null) return null;
+  return out
+    .split('\0')
+    .filter((f) => f && (f === 'package-lock.json' || f.endsWith('/package-lock.json')) && !f.includes('node_modules/'));
+}
+
+/**
+ * A etapa inteira. Nunca lança: o que não deu para conferir vira aviso (como
+ * ferramenta ausente); só o pacote barrado derruba o push.
+ */
+export function etapaDeLicencas({ cwd, env = process.env, pkg = null }) {
+  try {
+    const cfg = pkg?.neetru?.licencas ?? {};
+    const locks = lockfilesRastreados(cwd, env);
+    if (locks === null) {
+      return { ok: true, texto: '\n[pre-push] aviso: licencas não conferidas (o git ls-files falhou).\n', resumo: 'licencas pulado' };
+    }
+    if (locks.length === 0) return { ok: true, texto: '', resumo: null };
+    const pacotes = [];
+    const ilegiveis = [];
+    for (const rel of locks) {
+      try {
+        const bruto = readFileSync(path.join(cwd, rel), 'utf8').replace(/^\uFEFF/, '');
+        pacotes.push(...pacotesDoLock(JSON.parse(bruto), rel));
+      } catch {
+        ilegiveis.push(rel);
+      }
+    }
+    const julgamento = julgarLicencas(pacotes, { distribuido: cfg.distribuido === true, permitir: cfg.permitir });
+    let texto = relatorioDeLicencas(julgamento, locks.length - ilegiveis.length);
+    for (const rel of ilegiveis) texto += `[pre-push]   aviso: ${rel} não foi lido (apagado do disco ou JSON inválido)\n`;
+    const ok = julgamento.bloqueios.length === 0;
+    return { ok, texto, resumo: ok ? `licencas ${julgamento.total} pacotes` : null };
+  } catch (err) {
+    return { ok: true, texto: `\n[pre-push] aviso: licencas não conferidas (${err?.message ?? err}).\n`, resumo: 'licencas pulado' };
+  }
+}
+
 function gitOut(cwd, args, env) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: sanitizeGitEnv(env) });
   return r.status === 0 ? r.stdout.trim() : null;
@@ -631,8 +810,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     if (docs) steps.splice(posicaoDaEtapaDocs(steps), 0, docs);
   }
 
-  process.stdout.write(`[pre-push] gate Neetru — ${steps.map((s) => s.name).join(' -> ') || '(nenhuma etapa)'}\n`);
+  const nomes = [...(flags.noLicencas ? [] : ['licencas']), ...steps.map((s) => s.name)];
+  process.stdout.write(`[pre-push] gate Neetru — ${nomes.join(' -> ') || '(nenhuma etapa)'}\n`);
   if (flags.plan) {
+    if (!flags.noLicencas) {
+      process.stdout.write('[pre-push]   licencas: no processo, sem rede — campo license dos package-lock.json rastreados\n');
+    }
     // O resumo acima só tem nomes de script; num monorepo isso esconde o que
     // roda por app (bug_e0fb387f). Aqui vai o comando real de cada etapa.
     for (const s of steps) process.stdout.write(`[pre-push]   ${describeStep(s)}\n`);
@@ -647,6 +830,18 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   }
 
   const done = [];
+  if (flags.noLicencas) {
+    process.stdout.write('\n[pre-push] aviso: etapa licencas PULADA (NEETRU_PREPUSH_NO_LICENCAS=1) — declare o motivo no PR.\n');
+    done.push('licencas pulado');
+  } else {
+    const lic = etapaDeLicencas({ cwd, env, pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null });
+    if (lic.texto) (lic.ok ? process.stdout : process.stderr).write(lic.texto);
+    if (!lic.ok) {
+      process.stderr.write(`\n[pre-push] ABORTADO em "licencas". Nada foi enviado.${lembreteFalha}\n`);
+      return 1;
+    }
+    if (lic.resumo) done.push(lic.resumo);
+  }
   for (const step of steps) {
     if (step.error) {
       process.stderr.write(`[pre-push] FALHOU ${step.name}: ${step.error}${lembreteFalha}\n`);
