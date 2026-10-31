@@ -11,7 +11,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | Regra | Comportamento |
 |---|---|
 | Push direto pra `main`/`master` | **Bloqueado.** Fluxo é branch → PR → merge. Fuga consciente: `NEETRU_ALLOW_MAIN_PUSH=1` |
-| Etapas | typecheck → lint → **docs** (repo de produto, se `docs/**` mudou) → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
+| Etapas | **licencas** → typecheck → lint → **docs** (repo de produto, se `docs/**` mudou) → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
 | Não deu pra calcular o que mudou | **Roda tudo** (fail-closed). Nunca pular etapa em silêncio |
 | Push só de remoção de ref (`--delete`) | Não valida nada |
 | `NEETRU_SKIP_PREPUSH=1` | Pula tudo — **emergência**, e o motivo vai escrito no corpo do PR |
@@ -21,6 +21,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | Ferramenta ausente do PATH (`go`, CLI `neetru`) | Etapa **pulada com aviso** (fail-open). Se a ferramenta existe e quebra, **barra o push** (fail-closed) |
 | Arquivo rastreado apagado do disco sem a remoção preparada (` D`, `MD`, `AD`) | **Aviso, nunca barra**, e repetido na última linha (`[pre-push] OK`, ou `FALHOU`/`ABORTADO`, onde aparece como causa provável). Lista os arquivos e manda restaurar **só eles**: um comando em lote que roda no Git Bash e no PowerShell (não no cmd.exe), ou `git --literal-pathspecs restore -- '<caminho>'` (sem o flag, `app/[id]/` casa com `app/i/` e `app/d/`). **Nunca** `git restore .`, que joga fora toda edição não salva da árvore. Remover (`git --literal-pathspecs rm -- '<caminho>'`) só se você apagou de propósito; na dúvida, restaure |
 | `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
+| `NEETRU_PREPUSH_NO_LICENCAS=1` | Pula só a etapa **licencas** (declare no PR, como o skip) |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
 
@@ -35,6 +36,15 @@ Protocolo de docs de produto §8.3. Num repo **de produto** (tem `neetru.config.
 - Não deu pra calcular o que mudou → roda a etapa (fail-closed, como o resto do gate).
 - Repo sem `neetru.config.json` (CLI, SDK, agente, libs) não tem a etapa. O **Core** tem a própria checagem de docs (frontmatter + manifest) no `pre-push-check.mjs`.
 - Doc quebrado que não é seu (legado)? A catraca só cobra o que você alterou: corrija o que tocou. Erro em doc alheio que você não mexeu não aparece.
+
+## Etapa **licencas** (todo repo com `package-lock.json`)
+Pedido do dono depois da auditoria de licenças de 29/10/2026 (0 AGPL, 0 SSPL e 0 GPL no que roda): a etapa impede que entre. Roda **no processo, sem rede e sem instalar nada** — lê o campo `license` de cada pacote dos `package-lock.json` rastreados pelo git. É a primeira etapa, porque leva milissegundos.
+- **Barra o push:** AGPL, SSPL ou GPL num pacote que **roda** (não é só de dev). O mesmo pacote só-dev num lockfile e no que roda em outro conta como "roda".
+- **Repo distribuído** (o cliente recebe o código, ex.: Zelo): `package.json` → `"neetru": { "licencas": { "distribuido": true } }` — aí a **LGPL** no que roda também barra.
+- **Só avisa:** copyleft forte só em dev (ex.: `potrace`), copyleft fraco (LGPL, MPL, EPL…), fonte disponível restrita (BUSL, Elastic, Commons Clause…), licença que a regra não reconhece. "Sem licença no lockfile" (entrada antiga — o npm antigo não gravava o campo) e copyleft fraco só em dev viram **uma linha de contagem**.
+- **Dupla licença:** `MIT OR AGPL-3.0` conta como MIT (quem usa escolhe). `MIT AND GPL-3.0` conta como GPL.
+- **Exceção só com motivo escrito:** `"neetru": { "licencas": { "permitir": { "<pacote>": "<motivo>" } } }` — a chave é `pacote` ou `pacote@versão`; motivo vazio não vale. O pacote permitido continua aparecendo, com o motivo.
+- Só npm: `yarn.lock` e `pnpm-lock.yaml` não são lidos. O Core roda a mesma regra no `scripts/pre-push-check.mjs`.
 
 ## ⚠️ Worktree novo em repo com husky: NENHUM hook roda até você gerar `.husky/_`
 O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored) pelo `npm install`. Um `git worktree add` (inclusive os worktrees de agentes em `.claude/worktrees/`) **não tem essa pasta** e ninguém roda `npm install` nele (node_modules costuma vir por junction) → git não acha hook nenhum → **pre-commit e pre-push somem em silêncio** e o push sobe sem gate (achado 2026-09-30, Core PR #518).

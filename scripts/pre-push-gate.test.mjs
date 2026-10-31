@@ -27,8 +27,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  classeDaLicenca,
   ehExecucaoDireta,
+  julgarLicencas,
+  pacotesDoLock,
   planGoSteps,
+  relatorioDeLicencas,
+  textoDaLicenca,
   posicaoDaEtapaDocs,
   sanitizeGitEnv,
 } from '../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs';
@@ -203,6 +208,136 @@ test('docs: o gate usa posicaoDaEtapaDocs (amarração; nada de regex solto)', (
     assert.ok(fonte.includes('steps.splice(posicaoDaEtapaDocs(steps), 0, docs)'), `${rel}: a etapa docs não passa por posicaoDaEtapaDocs`);
     assert.ok(!/findIndex\(\(st\) => \/\^\(test\|go test\|build\)\$\//.test(fonte), `${rel}: sobrou o regex antigo`);
   }
+});
+
+// ─── etapa licencas (wi_ace1aaaa, 31/10/2026) ───────────────────────────────
+test('licencas: classe de cada expressão', () => {
+  const casos = {
+    MIT: 'permissiva',
+    'Apache-2.0': 'permissiva',
+    '(MIT OR AGPL-3.0)': 'permissiva', // dupla licença: quem usa escolhe a MIT
+    'GPL-2.0 OR LGPL-2.1': 'copyleft-fraco',
+    'AGPL-3.0-only': 'AGPL',
+    'SSPL-1.0': 'SSPL',
+    'GPL-2.0-or-later': 'GPL',
+    '(MIT AND GPL-3.0)': 'GPL', // AND soma as obrigações
+    'LGPL-3.0-or-later': 'copyleft-fraco',
+    'MPL-2.0': 'copyleft-fraco',
+    'BUSL-1.1': 'fonte-disponivel-restrita',
+    'CC-BY-SA-4.0': 'copyleft-fraco',
+    'CC-BY-4.0': 'permissiva',
+    '': 'sem-licenca-declarada',
+    'SEE LICENSE IN LICENSE.md': 'sem-licenca-declarada',
+    UNLICENSED: 'proprietaria-propria',
+    'Licença-Inventada-1.0': 'outra',
+  };
+  for (const [lic, esperado] of Object.entries(casos)) assert.equal(classeDaLicenca(lic), esperado, lic);
+});
+
+test('licencas: o campo license vem como texto, objeto ou lista', () => {
+  assert.equal(textoDaLicenca('MIT'), 'MIT');
+  assert.equal(textoDaLicenca({ type: 'BSD-3-Clause' }), 'BSD-3-Clause');
+  assert.equal(textoDaLicenca([{ type: 'MIT' }, 'GPL-2.0']), 'MIT OR GPL-2.0');
+  assert.equal(textoDaLicenca(undefined), '');
+});
+
+test('licencas: lockfile — sem a raiz, sem link de workspace, alias pelo nome real', () => {
+  const lock = {
+    packages: {
+      '': { name: 'raiz', license: 'GPL-3.0' },
+      'node_modules/meu-workspace': { link: true, resolved: 'packages/x' },
+      'packages/x': { name: 'x', license: 'GPL-3.0' },
+      'node_modules/apelido': { name: 'pacote-real', version: '1.0.0', license: 'MIT' },
+      'node_modules/a/node_modules/b': { version: '2.0.0', license: 'ISC', dev: true },
+    },
+  };
+  assert.deepEqual(pacotesDoLock(lock, 'x/package-lock.json'), [
+    { pacote: 'pacote-real', versao: '1.0.0', licenca: 'MIT', dev: false, lock: 'x/package-lock.json' },
+    { pacote: 'b', versao: '2.0.0', licenca: 'ISC', dev: true, lock: 'x/package-lock.json' },
+  ]);
+});
+
+const pac = (pacote, licenca, extra = {}) => ({ pacote, versao: '1.0.0', licenca, dev: false, lock: 'package-lock.json', ...extra });
+
+test('licencas: AGPL, SSPL e GPL no que roda BARRAM; em dev só avisam', () => {
+  const j = julgarLicencas([pac('a', 'AGPL-3.0'), pac('s', 'SSPL-1.0'), pac('g', 'GPL-2.0'), pac('d', 'GPL-2.0', { dev: true })]);
+  assert.deepEqual(j.bloqueios.map((p) => p.pacote), ['a', 's', 'g']);
+  assert.deepEqual(j.avisos.map((p) => p.pacote), ['d']);
+});
+
+test('licencas: o mesmo pacote em dev num lockfile e no que roda em outro BARRA', () => {
+  const j = julgarLicencas([pac('g', 'GPL-3.0', { dev: true }), pac('g', 'GPL-3.0', { lock: 'functions/package-lock.json' })]);
+  assert.equal(j.total, 1);
+  assert.equal(j.bloqueios.length, 1);
+});
+
+test('licencas: LGPL só barra em repo distribuído', () => {
+  assert.equal(julgarLicencas([pac('l', 'LGPL-2.1')]).bloqueios.length, 0);
+  assert.equal(julgarLicencas([pac('l', 'LGPL-2.1')], { distribuido: true }).bloqueios.length, 1);
+  // MPL não é LGPL: segue aviso mesmo distribuído
+  assert.equal(julgarLicencas([pac('m', 'MPL-2.0')], { distribuido: true }).bloqueios.length, 0);
+});
+
+test('licencas: exceção só com motivo escrito — e vale por pacote ou por pacote@versão', () => {
+  assert.equal(julgarLicencas([pac('g', 'GPL-2.0')], { permitir: { g: 'só no build, não vai ao ar' } }).bloqueios.length, 0);
+  assert.equal(julgarLicencas([pac('g', 'GPL-2.0')], { permitir: { 'g@1.0.0': 'ok do jurídico' } }).bloqueios.length, 0);
+  assert.equal(julgarLicencas([pac('g', 'GPL-2.0')], { permitir: { g: '   ' } }).bloqueios.length, 1);
+  assert.equal(julgarLicencas([pac('g', 'GPL-2.0')], { permitir: { 'g@9.9.9': 'outra versão' } }).bloqueios.length, 1);
+  assert.equal(julgarLicencas([pac('g', 'GPL-2.0')], { permitir: ['g'] }).bloqueios.length, 1);
+});
+
+test('licencas: relatório põe o mais grave primeiro e resume o barulho em contagem', () => {
+  const j = julgarLicencas([
+    pac('vazio1', ''),
+    pac('vazio2', ''),
+    pac('fraco-dev', 'MPL-2.0', { dev: true }),
+    pac('lgpl', 'LGPL-3.0'),
+    pac('gpl-dev', 'GPL-2.0', { dev: true }),
+  ]);
+  const t = relatorioDeLicencas(j, 1);
+  assert.ok(t.indexOf('gpl-dev') < t.indexOf('lgpl'), t);
+  assert.match(t, /1 pacote\(s\) de copyleft fraco só em dev/);
+  assert.match(t, /2 pacote\(s\) sem licença no lockfile/);
+  assert.equal(t.includes('vazio1'), false, 'sem licença vira contagem, não linha');
+});
+
+test('licencas: ponta a ponta — o push com GPL no que roda é ABORTADO; a exceção com motivo e a flag passam', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'neetru-licencas-'));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 3 }));
+  const env = sanitizeGitEnv(process.env);
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  const pkg = (licencas) =>
+    JSON.stringify({ name: 'x', private: true, scripts: { ok: 'node -e 0' }, neetru: { prePush: ['ok'], ...(licencas ? { licencas } : {}) } });
+  git('init', '-q');
+  git('config', 'user.email', 'gate@teste.invalid');
+  git('config', 'user.name', 'gate-teste');
+  git('config', 'commit.gpgsign', 'false');
+  writeFileSync(path.join(dir, 'package.json'), pkg());
+  writeFileSync(
+    path.join(dir, 'package-lock.json'),
+    JSON.stringify({ lockfileVersion: 3, packages: { '': { name: 'x' }, 'node_modules/copyleft': { version: '1.0.0', license: 'GPL-3.0' } } }),
+  );
+  git('add', '-A');
+  git('commit', '-q', '-m', 'lock');
+  const gate = (extraEnv = {}) =>
+    spawnSync(process.execPath, [path.join(raiz, TEMPLATE)], { cwd: dir, encoding: 'utf8', input: '', env: { ...env, ...extraEnv } });
+
+  const barrado = gate();
+  assert.equal(barrado.status, 1, barrado.stdout + barrado.stderr);
+  assert.match(barrado.stderr, /BARRADO \[GPL\] copyleft@1\.0\.0/);
+  assert.match(barrado.stderr, /ABORTADO em "licencas"/);
+
+  const pulado = gate({ NEETRU_PREPUSH_NO_LICENCAS: '1' });
+  assert.equal(pulado.status, 0, pulado.stdout + pulado.stderr);
+  assert.match(pulado.stdout, /licencas PULADA/);
+
+  writeFileSync(path.join(dir, 'package.json'), pkg({ permitir: { copyleft: 'teste: exceção com motivo' } }));
+  const permitido = gate();
+  assert.equal(permitido.status, 0, permitido.stdout + permitido.stderr);
+  assert.match(permitido.stdout, /PERMITIDO: teste: exceção com motivo/);
 });
 
 test('docs: as duas cópias do gate são idênticas', () => {
