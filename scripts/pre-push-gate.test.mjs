@@ -345,3 +345,25 @@ test('docs: as duas cópias do gate são idênticas', () => {
   const b = readFileSync(path.join(aqui, 'pre-push-gate.mjs'), 'utf8');
   assert.equal(a, b);
 });
+
+// ─── etapa que não chegou ao fim (02/11/2026) ────────────────────────────────
+// Morta por sinal ou sem conseguir iniciar (0xC0000142) não é reprovação: o push segue
+// barrado, mas a linha não pode mandar a equipe caçar defeito em código certo (30/10).
+test('classificarSaida: sinal e códigos de ambiente do Windows são NÃO CONCLUÍDO; o resto é reprovação', async () => {
+  const { classificarSaida } = await import('../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs');
+  assert.deepEqual(classificarSaida(0, null), { tipo: 'aprovado' });
+  assert.deepEqual(classificarSaida(null, 'SIGTERM'), { tipo: 'nao_concluido', motivo: 'morto por SIGTERM' });
+  assert.equal(classificarSaida(3221225794, null).tipo, 'nao_concluido'); // 0xC0000142
+  assert.equal(classificarSaida(-1073741502, null).tipo, 'nao_concluido'); // o mesmo, com sinal
+  assert.equal(classificarSaida(1, null).tipo, 'reprovado');
+  assert.equal(classificarSaida(3221225477, null).tipo, 'reprovado'); // 0xC0000005 pode ser do código
+});
+
+test('linhaDeAborto: não concluída diz que não é defeito do código; reprovada segue "ABORTADO em"', async () => {
+  const { linhaDeAborto } = await import('../plugins/neetru/skills/neetru-pre-push/pre-push-gate.mjs');
+  const nc = linhaDeAborto('test', { ok: false, naoConcluido: true, motivo: 'morto por SIGTERM' });
+  assert.match(nc, /"test" não chegou ao fim \(morto por SIGTERM\)\. Nada foi enviado\./);
+  assert.match(nc, /Não é defeito do código/);
+  assert.doesNotMatch(nc, /ABORTADO em/);
+  assert.equal(linhaDeAborto('test', { ok: false }, ' | X'), '\n[pre-push] ABORTADO em "test". Nada foi enviado. | X\n');
+});

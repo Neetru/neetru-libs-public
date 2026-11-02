@@ -20,6 +20,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | `--plan` | Mostra as etapas e sai, sem executar — com o **comando real** de cada uma (e o corpo do script npm), não só o nome |
 | Ferramenta ausente do PATH (`go`, CLI `neetru`) | Etapa **pulada com aviso** (fail-open). Se a ferramenta existe e quebra, **barra o push** (fail-closed) |
 | Arquivo rastreado apagado do disco sem a remoção preparada (` D`, `MD`, `AD`) | **Aviso, nunca barra**, e repetido na última linha (`[pre-push] OK`, ou `FALHOU`/`ABORTADO`, onde aparece como causa provável). Lista os arquivos e manda restaurar **só eles**: um comando em lote que roda no Git Bash e no PowerShell (não no cmd.exe), ou `git --literal-pathspecs restore -- '<caminho>'` (sem o flag, `app/[id]/` casa com `app/i/` e `app/d/`). **Nunca** `git restore .`, que joga fora toda edição não salva da árvore. Remover (`git --literal-pathspecs rm -- '<caminho>'`) só se você apagou de propósito; na dúvida, restaure |
+| Etapa morta por sinal ou que nem iniciou (`0xC0000142`; falta de memória `0xC0000017`/`0xC000012D`) | **NÃO CONCLUÍDO**: barra o push do mesmo jeito, mas a última linha diz que **não é defeito do código** — confira a memória da máquina e rode de novo. Antes saía `ABORTADO em` e mandava caçar erro em código certo |
 | `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
 | `NEETRU_PREPUSH_NO_LICENCAS=1` | Pula só a etapa **licencas** (declare no PR, como o skip) |
 
