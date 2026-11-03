@@ -478,6 +478,41 @@ export function lembreteApagados(n = 0, { falhou = false } = {}) {
     : `${base} (ver aviso acima; o push não foi barrado)`;
 }
 
+// ─── etapa que não chegou ao fim (02/11/2026) ────────────────────────────────
+
+/**
+ * Códigos de saída do Windows que dizem "o processo não conseguiu rodar" — ambiente, não
+ * reprovação. Mesmo critério do pre-deploy-check e do pre-push do Core: em 30/10/2026 uma
+ * etapa saiu em 0,0 s com 0xC0000142, o portão escreveu que tinha falhado e a equipe foi caçar
+ * defeito em código certo. Só entram códigos que são ambiente com certeza; violação de acesso
+ * (0xC0000005) e estouro de pilha (0xC00000FD) ficam de fora, podem ser do código medido.
+ */
+export const SAIDAS_DE_AMBIENTE_NO_WINDOWS = new Map([
+  [0xc0000142, 'o processo não conseguiu iniciar (0xC0000142: console órfão ou recursos do Windows esgotados)'],
+  [0xc0000017, 'faltou memória para o processo (0xC0000017)'],
+  [0xc000012d, 'estourou o limite de memória comprometida da máquina (0xC000012D)'],
+]);
+
+/** O veredito de uma etapa pelo jeito como o processo saiu. No Windows o código chega sem sinal e às vezes negativo. */
+export function classificarSaida(code, signal) {
+  if (code === 0) return { tipo: 'aprovado' };
+  if (signal) return { tipo: 'nao_concluido', motivo: `morto por ${signal}` };
+  const ambiente = typeof code === 'number' ? SAIDAS_DE_AMBIENTE_NO_WINDOWS.get(code >>> 0) : undefined;
+  if (ambiente) return { tipo: 'nao_concluido', motivo: ambiente };
+  return { tipo: 'reprovado' };
+}
+
+/** A última linha quando uma etapa não passa. A não concluída barra o push do mesmo jeito, mas não acusa o código. */
+export function linhaDeAborto(nome, r, lembrete = '') {
+  if (r && r.naoConcluido) {
+    return (
+      `\n[pre-push] ABORTADO: "${nome}" não chegou ao fim (${r.motivo}). Nada foi enviado. ` +
+      `Não é defeito do código: confira a memória da máquina e rode o push de novo.${lembrete}\n`
+    );
+  }
+  return `\n[pre-push] ABORTADO em "${nome}". Nada foi enviado.${lembrete}\n`;
+}
+
 // ─── etapa docs (template v3) ────────────────────────────────────────────────
 
 /** Versão mínima da CLI que tem `neetru docs check`. */
@@ -732,7 +767,18 @@ function run({ name, cmd, args, cwd: subdir }, cwd, env = process.env) {
     const dir = subdir && subdir !== '.' ? path.join(cwd, subdir) : cwd;
     const child = spawn([cmd, ...args].join(' '), { cwd: dir, stdio: 'inherit', shell: true, env: sanitizeGitEnv(env) });
     child.on('error', () => resolve({ ok: false, ms: Date.now() - start }));
-    child.on('exit', (code) => resolve({ ok: code === 0, ms: Date.now() - start }));
+    child.on('exit', (code, signal) => {
+      const ms = Date.now() - start;
+      const veredito = classificarSaida(code, signal);
+      if (veredito.tipo === 'nao_concluido') {
+        process.stderr.write(
+          `[pre-push] NÃO CONCLUÍDO ${name} — ${veredito.motivo}. Isto NÃO é reprovação: a etapa não chegou ao fim.\n`,
+        );
+        resolve({ ok: false, naoConcluido: true, motivo: veredito.motivo, ms });
+        return;
+      }
+      resolve({ ok: code === 0, ms });
+    });
   });
 }
 
@@ -855,7 +901,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     const r = await run(step, cwd, env);
     done.push(`${step.name} ${(r.ms / 1000).toFixed(1)}s`);
     if (!r.ok) {
-      process.stderr.write(`\n[pre-push] ABORTADO em "${step.name}". Nada foi enviado.${lembreteFalha}\n`);
+      process.stderr.write(linhaDeAborto(step.name, r, lembreteFalha));
       return 1;
     }
   }
