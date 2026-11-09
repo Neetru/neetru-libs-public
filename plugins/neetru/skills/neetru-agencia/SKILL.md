@@ -54,7 +54,7 @@ Antes de qualquer afirmação sobre o produto:
 3. Se a resposta for "ainda não", a afirmação **sai da peça**. Não vira "em breve", não vira asterisco. Recurso que não existe não se anuncia de forma nenhuma.
 4. Registrar a confirmação com data, para a próxima peça não repetir a pergunta.
 
-**Afirmação proibida sem confirmação nova:** emissão de nota fiscal, integração com maquininha, funcionamento sem internet, política de backup, qualquer número de cliente, qualquer comparação com concorrente.
+**Afirmação proibida sem confirmação nova:** emissão de nota fiscal, integração com maquininha, funcionamento sem internet, QR Code Pix gerado pelo caixa, sangria e suprimento, troco calculado, vários operadores nos planos à venda, política de backup, qualquer número de cliente, qualquer comparação com concorrente.
 
 Risco real: Código de Defesa do Consumidor, art. 37 (propaganda enganosa) e art. 30 (a oferta anunciada obriga quem anuncia).
 
@@ -193,7 +193,7 @@ Nem todo contato vira cliente, e perseguir o errado consome o pouco tempo que te
 
 - **Imagem**: template HTML/CSS → Chrome → PNG. Comece pelos modelos do pacote (`<PASTA-DA-MARCA>\arquivos\01-neetru\modelos\redes\` e `arquivos\02-produtos\pdv-agiliza\modelos\redes\`). Os geradores antigos estão em `<PASTA-DA-MARCA>\agencia\artes\` (`gerar3.mjs` feed, `gerar4.mjs` story/capa, módulo `sistema\`), marcados **SUPERADO**: corrija ®, cor do PDV, linha legal e tipografia antes de usar. As peças do manual já corrigidas (™, Inter, AGILIZA, linha legal) saem por `<PASTA-DA-MARCA>\brandbook\_ferramentas\pecas_06.py`, `pecas_manual.py` e `pecas_cap04.py`.
 - **Objeto 3D**: Blender portátil em `<BLENDER-PORTATIL>`, Cycles CPU, HDRI CC0, PNG com alpha, **sem chão e sem sombra** (`<PASTA-DA-MARCA>\agencia\artes\sistema\render2.py`, que substitui o `celular3d.py`; vários renders: `sistema\lote.py`).
-- **Vídeo: não é papel da agência** (dono, 22/10/2026, depois de reprovar um teste com voz sintética local: "uma merda a voz, robotizada... mas não é seu papel vídeo"). Roteiro de vídeo pode ir como referência para quem produzir; produzir, não.
+- **Vídeo: não é papel da agência** (decisão do dono, 22/10/2026, depois de reprovar um teste com voz sintética local). Roteiro de vídeo pode ir como referência para quem produzir; produzir, não.
 - **Manual de marca, identidade de produto, modelos editáveis**: padrão e processo na skill `neetru-identidade` (brandbook aprovado em 22/10/2026).
 - **Medição**: contraste, recorte e zona segura conferidos por script, nunca no olho.
 
@@ -223,6 +223,7 @@ Pasta: `<PASTA-DA-MARCA>\agencia\marketing\` (as artes antigas em `..\artes\`). 
 4. **Trocar a foto de perfil quatro vezes** e sujar a linha do tempo com quatro posts automáticos. → acertar a imagem antes, trocar uma vez.
 5. **Confiar na memória em vez do código.** O módulo que a memória dizia existir estava noutro lugar; o recurso que a memória dizia existir não existia. → verificar no campo.
 6. **Zona segura por palpite.** O retângulo que eu desenhava mentia em 176 pixels. → medir no arquivo final.
-7. **Anunciar "Pix integrado" e plano "gratuito para sempre".** Nenhum dos dois é verdade: o PDV gera o QR Code Pix com o valor da venda, na chave do lojista, e não confirma sozinho; o Pix não é integrado (uma cópia do `product-brand.ts` do Core lida em 22/10 ainda dizia "Pix integrado": texto de produto no código não é prova); o Livre pode ter fila e limite (dono, 22/10/2026). → cargo 2.
-8. **Ativar ou publicar com um "ok" solto.** O dono quer ver tudo numa página de aprovação numerada antes. "ok" não é aprovação de gasto. → confirmar item por item.
-9. **Nome de pessoa em mensagem, botão ou modelo** ("Aqui é o [nome]"). → tudo em nome da Neetru.
+7. **Anunciar "Pix integrado" e plano "gratuito para sempre".** Nenhum dos dois é verdade: o Pix não é integrado e o caixa não confirma o pagamento sozinho (uma cópia do `product-brand.ts` do Core lida em 22/10 ainda dizia "Pix integrado": texto de produto no código não é prova); o Livre pode ter fila e limite (dono, 22/10/2026). → cargo 2.
+8. **Anunciar o QR Code Pix, a sangria e a venda sem internet como prontos.** De 22 a 26/10/2026 o catálogo dizia que o caixa gera o QR Code com o valor da venda; o código do app do PDV mostrou que ele não gera (o Pix é só a forma de pagamento registrada), que o caixa não tem sangria nem suprimento e que fechar a venda precisa de internet. A régua é o código do app, conferido arquivo por arquivo; a promessa "corrigida" de 22/10 também estava errada. → cargo 2.
+9. **Ativar ou publicar com um "ok" solto.** O dono quer ver tudo numa página de aprovação numerada antes. "ok" não é aprovação de gasto. → confirmar item por item.
+10. **Nome de pessoa em mensagem, botão ou modelo** ("Aqui é o [nome]"). → tudo em nome da Neetru.

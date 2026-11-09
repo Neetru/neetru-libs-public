@@ -54,6 +54,48 @@ claude plugin marketplace add Neetru/neetru-libs-public --scope user
 claude plugin install neetru@neetru --scope user
 ```
 
+## Manter atualizado (todo Claude, toda sessão nova)
+
+As skills mudam quando o produto muda — uma skill velha ensina comando que não
+existe e regra que já caiu. **Atualize no começo de cada sessão de trabalho**:
+
+```bash
+# com a CLI Neetru
+npm install -g @neetru/cli@latest
+neetru archive skills install
+
+# ou via marketplace
+claude plugin marketplace update neetru
+claude plugin update neetru@neetru --scope user
+```
+
+Confira a versão instalada contra o `version` de
+`plugins/neetru/.claude-plugin/plugin.json` desta loja. Diferente = atualizar.
+
+## Plugins oficiais do Claude Code
+
+Além do plugin `neetru` (obrigatório), estes plugins do marketplace oficial
+`anthropics/claude-plugins-official` são os que a Neetru usa. Instale com
+`claude plugin install <nome>@claude-plugins-official --scope user`.
+
+| Plugin | Para quê | Quem |
+|---|---|---|
+| `superpowers` | Processo: planejar, depurar com método, testar antes de declarar pronto | todo Claude que escreve código |
+| `code-review` · `pr-review-toolkit` | Revisão de PR antes do merge | quem abre PR |
+| `security-guidance` | Alerta de padrão inseguro ao editar | quem escreve código |
+| `typescript-lsp` | Tipos e referências do TypeScript | repos TypeScript |
+| `context7` | Documentação atual das bibliotecas (Next, React, Firebase…) | quem escreve código |
+| `github` · `commit-commands` | Operações de GitHub e commit | quem abre PR |
+| `firebase` | Firestore, Auth e Functions | Core e produtos com Firebase |
+| `mercadopago` · `stripe` | Integração de pagamento | só quem mexe em cobrança |
+| `playwright` · `chrome-devtools-mcp` | Provar no navegador que a página aparece (health 200 não prova) | quem entrega tela |
+| `frontend-design` | Direção visual de interface | quem entrega tela |
+| `skill-creator` · `plugin-dev` | Escrever e revisar skills e plugins | quem edita esta loja |
+
+Fora desta lista, instale só com motivo — plugin a mais é contexto a mais.
+**Nunca** use plugin ou servidor MCP que mande código ou dado de cliente para
+serviço de terceiro sem autorização do dono.
+
 ## Pra quem edita
 
 A fonte é o repo privado `Neetru/neetru-libs`, em `claude-skills/`. **Esta loja é
