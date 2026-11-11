@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "node scripts/packages-run.mjs typecheck",
     "test": "node scripts/packages-run.mjs test",
-    "gate:check": "node --test scripts/pre-push-gate.test.mjs",
+    "gate:check": "node --test scripts/pre-push-gate.test.mjs scripts/pre-push-gate-lockfile.test.mjs",
     "prepare": "node -e \"try{if(require('fs').existsSync('.git'))require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'],{stdio:'ignore'})}catch{}\""
   },
   "neetru": {

@@ -11,7 +11,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | Regra | Comportamento |
 |---|---|
 | Push direto pra `main`/`master` | **Bloqueado.** Fluxo é branch → PR → merge. Fuga consciente: `NEETRU_ALLOW_MAIN_PUSH=1` |
-| Etapas | **licencas** → typecheck → lint → **docs** (repo de produto, se `docs/**` mudou) → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
+| Etapas | **licencas** → **lockfile no npm 10** → typecheck → lint → **docs** (repo de produto, se `docs/**` mudou) → testes (→ build só em FULL). **Aborta na 1ª falha, nada é enviado** |
 | Não deu pra calcular o que mudou | **Roda tudo** (fail-closed). Nunca pular etapa em silêncio |
 | Push só de remoção de ref (`--delete`) | Não valida nada |
 | `NEETRU_SKIP_PREPUSH=1` | Pula tudo — **emergência**, e o motivo vai escrito no corpo do PR |
@@ -23,6 +23,8 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | Etapa morta por sinal ou que nem iniciou (`0xC0000142`; falta de memória `0xC0000017`/`0xC000012D`) | **NÃO CONCLUÍDO**: barra o push do mesmo jeito, mas a última linha diz que **não é defeito do código** — confira a memória da máquina e rode de novo. Antes saía `ABORTADO em` e mandava caçar erro em código certo |
 | `NEETRU_PREPUSH_NO_DOCS=1` | Pula só a etapa **docs** (declare no PR, como o skip) |
 | `NEETRU_PREPUSH_NO_LICENCAS=1` | Pula só a etapa **licencas** (declare no PR, como o skip) |
+| `NEETRU_LOCKFILE_NPM10_PULADO="<motivo>"` | Pula só a etapa **lockfile no npm 10**, com o motivo impresso no log. **O motivo é obrigatório**: `=1` sem dizer o porquê **barra** o push. Declare no PR |
+| `NEETRU_NPM_CACHE=<dir>` | Cache do npm da etapa do lockfile (`npx --cache <dir>`); sem ele vale o cache padrão do npm |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
 
@@ -46,6 +48,13 @@ Pedido do dono depois da auditoria de licenças de 29/10/2026 (0 AGPL, 0 SSPL e 
 - **Dupla licença:** `MIT OR AGPL-3.0` conta como MIT (quem usa escolhe). `MIT AND GPL-3.0` conta como GPL.
 - **Exceção só com motivo escrito:** `"neetru": { "licencas": { "permitir": { "<pacote>": "<motivo>" } } }` — a chave é `pacote` ou `pacote@versão`; motivo vazio não vale. O pacote permitido continua aparecendo, com o motivo.
 - Só npm: `yarn.lock` e `pnpm-lock.yaml` não são lidos. O Core roda a mesma regra no `scripts/pre-push-check.mjs`.
+
+## Etapa **lockfile no npm 10** (todo repo com `package-lock.json` na raiz)
+Padrão da casa (dono, 11/11/2026): **produção é Node 22 LTS e npm 10, e o lockfile tem de passar no `npm ci` do npm 10.** O PC de dev costuma ter Node 24 e npm 11, que gera um lock que o npm 10 recusa (`Missing: @emnapi/core@x from lock file`: o npm 11 omite as entradas de topo `node_modules/@emnapi/*`). A quebra só aparecia no build do deploy ou da máquina de CI, longe de quem gerou o lock (`bug_0ba83586`).
+- **O que roda:** `npx --yes npm@10 ci --dry-run --ignore-scripts --no-audit --no-fund --prefer-offline`. O `--dry-run` só monta a árvore e compara com o lock: não escreve em `node_modules` e leva uns 5 s com o `npm@10` no cache do `npx`. Por isso roda **sempre, também no `NEETRU_PREPUSH_FAST=1`**, e também com o override `neetru.prePush`. É a segunda etapa, logo depois das licenças.
+- **Reprovou:** a etapa mostra o sintoma como o npm o disse e o conserto: `npx --yes npm@10 install --package-lock-only --ignore-scripts` (regenera o lock com o npm 10, sem tocar em `node_modules`). Commite o lock.
+- **Falha de ambiente** (sem rede, `npm@10` fora do cache do `npx`) não é lock fora de sincronia, e o gate não manda regenerar: rode uma vez com rede, ou aponte o cache da máquina (`NEETRU_NPM_CACHE=<dir>`), ou pule **com o motivo** (`NEETRU_LOCKFILE_NPM10_PULADO="sem rede e sem o npm@10 no cache do npx" git push …`) e declare no PR.
+- **Versão:** o repo declara `engines.node` `>=22` e traz `.nvmrc` e `.node-version` com `22` (LF travado no `.gitattributes`). Em **biblioteca publicada** o `engines` fica **sem teto** (`>=22`, nunca `<23`): quem consome em Node 24 não pode ganhar aviso.
 
 ## ⚠️ Worktree novo em repo com husky: NENHUM hook roda até você gerar `.husky/_`
 O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored) pelo `npm install`. Um `git worktree add` (inclusive os worktrees de agentes em `.claude/worktrees/`) **não tem essa pasta** e ninguém roda `npm install` nele (node_modules costuma vir por junction) → git não acha hook nenhum → **pre-commit e pre-push somem em silêncio** e o push sobe sem gate (achado 2026-09-30, Core PR #518).
