@@ -27,6 +27,15 @@
  * Etapa licencas (primeira, NO PROCESSO, sem rede — ver etapaDeLicencas): AGPL, SSPL
  *   ou GPL fora de dev nos package-lock.json rastreados BARRA o push; em repo
  *   distribuído ("neetru": { "licencas": { "distribuido": true } }) a LGPL também.
+ * Etapa lockfile no npm 10 (logo depois das licenças; SEMPRE, também no FAST; só em repo
+ *   com package-lock.json): `npx --yes npm@10 ci --dry-run --ignore-scripts --no-audit
+ *   --no-fund --prefer-offline`. Padrão da casa (dono, 11/11/2026): produção é Node 22
+ *   LTS + npm 10, e o lockfile tem de passar no `npm ci` do npm 10. O PC de dev tem
+ *   Node 24 + npm 11, que gera um lock que o npm 10 recusa ("Missing: @emnapi/core@x
+ *   from lock file"); a quebra só aparecia no build do deploy/CI, longe de quem gerou o
+ *   lock. O dry-run só monta a árvore e compara com o lock (não escreve em node_modules;
+ *   ~5 s). Reprovou: a etapa mostra o sintoma e o conserto
+ *   (`npx --yes npm@10 install --package-lock-only --ignore-scripts`).
  * Etapas (Node — scripts do package.json, na ordem):
  *   typecheck  script `typecheck`; senão `lint` se ele for `tsc --noEmit`;
  *              senão `npx tsc --noEmit` se existir tsconfig.json
@@ -50,6 +59,12 @@
  *   NEETRU_ALLOW_MAIN_PUSH=1  permite push direto pra main/master
  *   NEETRU_PREPUSH_NO_DOCS=1  pula só a etapa docs (declare no PR)
  *   NEETRU_PREPUSH_NO_LICENCAS=1  pula só a etapa licencas (declare no PR)
+ *   NEETRU_LOCKFILE_NPM10_PULADO=<motivo>
+ *                             pula só a etapa do lockfile no npm 10, com o motivo impresso
+ *                             (obrigatório: `=1` sem dizer o porquê BARRA o push). Ex.: "sem
+ *                             rede e sem o npm@10 no cache do npx". Declare no PR.
+ *   NEETRU_NPM_CACHE=<dir>    cache do npm da etapa do lockfile (`--cache <dir>`);
+ *                             sem ele vale o cache padrão do npm
  *   --plan                    imprime o plano e sai
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -128,6 +143,9 @@ export function parseFlags(argv = [], env = {}) {
     allowMain: env.NEETRU_ALLOW_MAIN_PUSH === '1',
     noDocs: env.NEETRU_PREPUSH_NO_DOCS === '1',
     noLicencas: env.NEETRU_PREPUSH_NO_LICENCAS === '1',
+    // Só aparam o espaço: o motivo (ou a falta dele) é julgado em `lockfileNpm10Steps`.
+    lockfileNpm10Pulado: String(env.NEETRU_LOCKFILE_NPM10_PULADO ?? '').trim() || null,
+    npmCache: String(env.NEETRU_NPM_CACHE ?? '').trim() || null,
     plan: has('--plan'),
   };
 }
@@ -285,8 +303,147 @@ export function describeStep(step) {
   return step.detail ? `${step.name}  ${cmd}  ->  ${step.detail}` : `${step.name}  ${cmd}`;
 }
 
+// ─── etapa lockfile no npm 10 ────────────────────────────────────────────────
+//
+// Padrão da casa (dono, 11/11/2026): produção é Node 22 LTS e npm 10, e o lockfile tem
+// de passar no `npm ci` do npm 10. O PC de desenvolvimento tem Node 24 e npm 11, e é
+// aqui que o lock é gerado: o npm 11 OMITE as entradas de topo `node_modules/@emnapi/*`
+// (dependências opcionais de pacotes wasm32), e o `npm ci` do npm 10 reprova com
+// "Missing: @emnapi/core@x from lock file". Foi o que derrubou o portão remoto do SDK
+// no `npm ci` (bug_0ba83586): a quebra só aparecia no build, longe de quem gerou o lock.
+//
+// `npm ci --dry-run` só monta a árvore ideal e compara com o lock (não escreve em
+// `node_modules`; ~5 s com o npm@10 já no cache do npx). Por isso roda SEMPRE, também
+// no FAST: é barata e é a que evita a quebra no deploy.
+
+export const LOCKFILE_NPM10_STEP = 'lockfile no npm 10';
+/** O conserto: regenera o lock com o npm 10, sem tocar em `node_modules`. */
+export const LOCKFILE_NPM10_CONSERTO = 'npx --yes npm@10 install --package-lock-only --ignore-scripts';
+/** `=1`, `=true`: a flag sem o motivo. O motivo é o que fica no log da push. */
+const MOTIVO_VAZIO_RE = /^(?:1|0|true|false|sim|yes|on)$/i;
+
+/**
+ * Argumentos do `npx` da etapa (puros, sem rede). `--cache` vai ANTES do pacote: é do
+ * `npx`, e ele repassa a configuração ao `npm ci` filho. Sem `cache`, vale o padrão do npm.
+ */
+export function lockfileNpm10Args({ cache = null } = {}) {
+  return [
+    '--yes',
+    ...(cache ? ['--cache', cache] : []),
+    'npm@10',
+    'ci',
+    '--dry-run',
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+    '--prefer-offline',
+  ];
+}
+
+/**
+ * A etapa do lockfile (pura): uma etapa que roda, ou uma pulada quando
+ * `NEETRU_LOCKFILE_NPM10_PULADO` traz o motivo. Pular exige o motivo: `=1` sem dizer o
+ * porquê vira erro (BARRA o push) em vez de pular calado.
+ */
+export function lockfileNpm10Steps(flags = {}) {
+  const motivo = flags.lockfileNpm10Pulado ?? null;
+  if (motivo !== null) {
+    if (MOTIVO_VAZIO_RE.test(motivo) || motivo.length < 3) {
+      return [
+        {
+          name: LOCKFILE_NPM10_STEP,
+          error: `NEETRU_LOCKFILE_NPM10_PULADO="${motivo}" não diz o motivo. Escreva o porquê (ex.: "sem rede e sem o npm@10 no cache do npx") — ele fica no log da push.`,
+        },
+      ];
+    }
+    return [
+      {
+        name: LOCKFILE_NPM10_STEP,
+        skip: `etapa "${LOCKFILE_NPM10_STEP}" PULADA (NEETRU_LOCKFILE_NPM10_PULADO="${motivo}") — declare o motivo no PR.`,
+      },
+    ];
+  }
+  return [
+    {
+      name: LOCKFILE_NPM10_STEP,
+      cmd: 'npx',
+      args: lockfileNpm10Args({ cache: flags.npmCache ?? null }),
+      // A saída do dry-run lista centenas de linhas `add <pacote>`: o runner a captura e,
+      // só se a etapa reprovar, imprime o resumo de `resumirFalhaLockfile`.
+      capturar: 'npm-ci',
+    },
+  ];
+}
+
+/**
+ * Lê a saída do `npm ci` (pura): separa o lock FORA DE SINCRONIA ("Missing: x from lock
+ * file", "Invalid: lock file's x does not satisfy y", o aviso EUSAGE) de qualquer outra
+ * falha (rede, cache, registro), que não se conserta regenerando o lock.
+ */
+export function interpretarSaidaNpmCi(saida) {
+  const bruto = String(saida ?? '');
+  const linhas = bruto
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^npm (?:error|ERR!)\s?/, '').trim())
+    .filter(Boolean);
+  const faltando = linhas.filter((l) => /^Missing: .+ from lock file$/.test(l));
+  const invalidos = linhas.filter((l) => /^Invalid: /.test(l));
+  const foraDeSincronia =
+    faltando.length > 0 ||
+    invalidos.length > 0 ||
+    linhas.some((l) => /can only install packages when your package\.json and package-lock\.json/.test(l));
+  // Só as linhas de erro do npm (as de aviso, como EBADENGINE, não são a falha).
+  const erros = bruto
+    .split(/\r?\n/)
+    .filter((l) => /^npm (?:error|ERR!)/.test(l))
+    .map((l) => l.replace(/^npm (?:error|ERR!)\s?/, '').trim())
+    .filter(Boolean);
+  return { foraDeSincronia, faltando, invalidos, erros };
+}
+
+const LOCKFILE_LINHAS_MAX = 8;
+
+/** O que a etapa imprime quando o `npm ci` do npm 10 reprova: o sintoma, como o npm o disse. */
+export function resumirFalhaLockfile(saida) {
+  const { foraDeSincronia, faltando, invalidos, erros } = interpretarSaidaNpmCi(saida);
+  const sintomas = foraDeSincronia
+    ? [...faltando, ...invalidos]
+    : erros.filter((l) => !/^(?:Usage|Options|aliases|Run "npm help)/.test(l) && !l.startsWith('['));
+  const mostradas = sintomas.slice(0, LOCKFILE_LINHAS_MAX);
+  const resto = sintomas.length - mostradas.length;
+  return [
+    foraDeSincronia
+      ? '[pre-push] O package-lock.json está fora de sincronia para o npm 10 (o do deploy e da máquina de CI):'
+      : '[pre-push] O `npm ci` do npm 10 falhou:',
+    ...mostradas.map((l) => `  ${l}`),
+    ...(resto > 0 ? [`  … e mais ${resto} linha(s) iguais a estas`] : []),
+  ].join('\n');
+}
+
+/**
+ * A orientação que sai depois da falha de uma etapa (pura). O sintoma já saiu acima,
+ * resumido do log do npm; aqui vão a causa e o conserto. Lock fora de sincronia e falha
+ * de ambiente (sem rede, npm@10 fora do cache) pedem remédios diferentes: a dica diz os dois.
+ */
+export function dicaDaFalha(stepName) {
+  if (stepName !== LOCKFILE_NPM10_STEP) return null;
+  return [
+    '[pre-push] Padrão da casa: produção é Node 22 LTS + npm 10, e o lockfile tem de passar no `npm ci` do npm 10.',
+    '  Se o log acima diz "Missing: … from lock file": o lock foi gerado com npm 11 (PC de dev com Node 24), que omite',
+    '  entradas de topo `node_modules/@emnapi/*`. Regenere com o npm 10 e commite o lock:',
+    `    ${LOCKFILE_NPM10_CONSERTO}`,
+    '  Confira sem gravar: `npx --yes npm@10 ci --dry-run --ignore-scripts --no-audit --no-fund`.',
+    '  Se é ambiente (sem rede, npm@10 fora do cache do npx): rode com rede uma vez, ou use o cache da máquina',
+    '  (NEETRU_NPM_CACHE=<dir>), ou NEETRU_LOCKFILE_NPM10_PULADO="<motivo>" git push … (o motivo vai para o log e para o PR).',
+  ].join('\n');
+}
+
 /**
  * Plano puro (testável): recebe o que existe no repo, devolve as etapas.
+ *
+ * `hasLockfile` (há `package-lock.json` na raiz) liga a etapa do lockfile no npm 10 na
+ * frente das demais — com auto-detecção ou com `neetru.prePush`, e também no FAST. Quem
+ * chama sem `hasLockfile` (testes antigos, repo sem lock) não ganha a etapa.
  *
  * `hasTool(cmd)` diz se o binário está no PATH; é injetável pra teste e o
  * default `() => true` mantém a função determinística quando o teste não liga.
@@ -298,7 +455,13 @@ export function describeStep(step) {
  * `neetru.prePush` continua substituindo a auto-detecção por inteiro (o repo
  * assumiu o controle e pode delegar por app), mas agora honra FAST e FULL.
  */
-export function planSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool = () => true }) {
+export function planSteps({ hasLockfile = false, flags = {}, ...resto }) {
+  const steps = planStackSteps({ flags, ...resto });
+  return hasLockfile ? [...lockfileNpm10Steps(flags), ...steps] : steps;
+}
+
+/** As etapas da stack (Node e Go) — o que `planSteps` tinha antes da etapa do lockfile. */
+function planStackSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool = () => true }) {
   const scripts = pkg?.scripts ?? {};
   const override = pkg?.neetru?.prePush;
   if (Array.isArray(override)) return planOverrideSteps(override, scripts, flags);
@@ -756,7 +919,17 @@ function cliVersionOf(cwd, env) {
   return r.status === 0 ? parseCliVersion(r.stdout) : null;
 }
 
-function run({ name, cmd, args, cwd: subdir }, cwd, env = process.env) {
+// shell:true (necessário pro npx.cmd no Windows) + array de args dispara DEP0190.
+// Montar a linha de comando nós mesmos evita o warning — daí o quote (só o que não é
+// seguro pro shell: o caminho de `NEETRU_NPM_CACHE` pode ter espaço).
+const SHELL_SAFE_RE = /^[\w@%+.,:=/-]+$/;
+
+export function quoteArg(arg) {
+  const s = String(arg);
+  return SHELL_SAFE_RE.test(s) ? s : `"${s.replace(/(["\\])/g, '\\$1')}"`;
+}
+
+function run({ name, cmd, args, cwd: subdir, capturar }, cwd, env = process.env) {
   return new Promise((resolve) => {
     const start = Date.now();
     process.stdout.write(`\n[pre-push] -> ${name}\n`);
@@ -765,9 +938,25 @@ function run({ name, cmd, args, cwd: subdir }, cwd, env = process.env) {
     // `subdir` existe pra perna nativa em monorepo aninhado: o `go.mod` pode
     // morar em apps/agent e `go vet ./...` precisa rodar LA, nao na raiz.
     const dir = subdir && subdir !== '.' ? path.join(cwd, subdir) : cwd;
-    const child = spawn([cmd, ...args].join(' '), { cwd: dir, stdio: 'inherit', shell: true, env: sanitizeGitEnv(env) });
+    // `capturar`: a saída é longa e só a falha interessa (etapa do lockfile no npm 10).
+    const child = spawn([cmd, ...args].map(quoteArg).join(' '), {
+      cwd: dir,
+      stdio: capturar ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+      shell: true,
+      env: sanitizeGitEnv(env),
+    });
+    let saida = '';
+    if (capturar) {
+      const guardar = (d) => {
+        // Teto de 2 MB: o `npm ci --dry-run` de um monorepo gera dezenas de KB.
+        if (saida.length < 2_000_000) saida += d;
+      };
+      child.stdout.on('data', guardar);
+      child.stderr.on('data', guardar);
+    }
     child.on('error', () => resolve({ ok: false, ms: Date.now() - start }));
-    child.on('exit', (code, signal) => {
+    // Com pipes, o `close` (e não o `exit`) garante que a saída inteira já foi lida.
+    child.on(capturar ? 'close' : 'exit', (code, signal) => {
       const ms = Date.now() - start;
       const veredito = classificarSaida(code, signal);
       if (veredito.tipo === 'nao_concluido') {
@@ -777,6 +966,7 @@ function run({ name, cmd, args, cwd: subdir }, cwd, env = process.env) {
         resolve({ ok: false, naoConcluido: true, motivo: veredito.motivo, ms });
         return;
       }
+      if (capturar === 'npm-ci' && code !== 0) process.stderr.write(`${resumirFalhaLockfile(saida)}\n`);
       resolve({ ok: code === 0, ms });
     });
   });
@@ -824,6 +1014,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   const steps = planSteps({
     pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
     hasTsconfig: existsSync(path.join(cwd, 'tsconfig.json')),
+    hasLockfile: existsSync(path.join(cwd, 'package-lock.json')),
     goDir: findGoDir({
       pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
       exists: (rel) => existsSync(path.join(cwd, rel)),
@@ -901,6 +1092,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     const r = await run(step, cwd, env);
     done.push(`${step.name} ${(r.ms / 1000).toFixed(1)}s`);
     if (!r.ok) {
+      // Etapa que não chegou ao fim (ambiente) não é lock fora de sincronia: sem dica de conserto.
+      const dica = r.naoConcluido ? null : dicaDaFalha(step.name);
+      if (dica) process.stderr.write(`${dica}\n`);
       process.stderr.write(linhaDeAborto(step.name, r, lembreteFalha));
       return 1;
     }
