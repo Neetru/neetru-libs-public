@@ -52,6 +52,19 @@
  *   controle e pode delegar por app — mas honra FAST (pula `test`/`test:*`) e
  *   FULL (acrescenta `build`) igual a ela. `--plan` imprime o comando real.
  *
+ * Modo CI remoto (ordem do dono, 12/11/2026: o PC principal só edita e envia; tsc, testes e
+ *   build rodam na VM de CI e o merge exige o portão completo VERDE no SHA da ponta):
+ *   `git config neetru.ci remoto` (uma vez por clone; config local, NUNCA --global; só o
+ *   valor exato `remoto` liga, qualquer outro é ignorado com aviso) liga o modo LEVE: o gate
+ *   roda SÓ as etapas da lista explícita `neetru.prePushLeve` do package.json. Sem a lista,
+ *   vale ["licencas", "lockfile"], as etapas internas que não precisam de node_modules nem de
+ *   build. A lista aceita `licencas`, `lockfile`, `docs` (só em repo de produto) e o nome de um
+ *   script do package.json; typecheck, lint, test, test:*, build, peso e provar NUNCA entram,
+ *   seja qual for a lista (a etapa sai, com aviso). A decisão é pela LISTA, não pelo nome: um
+ *   script `verify` que roda vitest simplesmente não está na lista. O gate imprime UMA linha
+ *   dizendo que o modo está ligado. NEETRU_PREPUSH_FULL=1 (ou --full) pede o portão completo
+ *   e vence a config: é como a VM de CI roda o gate.
+ *
  * Flags (env ou CLI):
  *   NEETRU_SKIP_PREPUSH=1     pula tudo (emergência — declare no PR)
  *   NEETRU_PREPUSH_FULL=1     inclui build
@@ -476,6 +489,141 @@ function planStackSteps({ pkg, hasTsconfig, hasGoMod, goDir, flags = {}, hasTool
     steps.push(...planGoSteps(flags, hasTool('go'), dir));
   }
   return steps;
+}
+
+// ─── modo CI remoto (12/11/2026) ─────────────────────────────────────────────
+//
+// Ordem do dono: o PC principal só edita e envia; build, tsc e testes rodam na VM de CI
+// (`bash S:/Documents/Neetru/oracle-ci/ci.sh portao <repo> <sha>`), e o merge só sai com o
+// portão completo VERDE no SHA da ponta. O push ao GitHub segue passando por este gancho,
+// mas no modo LEVE: só as etapas baratas e sem node_modules. Liga-se uma vez por clone,
+// com `git config neetru.ci remoto` (config local, vale para todos os worktrees do clone).
+//
+// O FAST (NEETRU_PREPUSH_FAST=1) não serve a isto: ele só pula etapa chamada `test` ou
+// `test:*`, então o typecheck (e, no SDK, o `lint`, que é um `tsc --noEmit`) ainda rodava no
+// PC. Por isso a decisão do modo leve é por LISTA, e não por filtro de nome: roda o que o repo
+// declarou em `neetru.prePushLeve`, e nada além. O filtro de nome fica só como segunda trava:
+// um nome que é, sem dúvida, pesado sai da lista mesmo que alguém o tenha escrito lá.
+
+/** Valor de `git config neetru.ci` que liga o modo CI remoto. Só este valor exato. */
+export const CONFIG_CI_REMOTO = 'remoto';
+
+/** A lista leve que vale quando o package.json não declara `neetru.prePushLeve`. */
+export const LISTA_LEVE_PADRAO = Object.freeze(['licencas', 'lockfile']);
+
+/**
+ * Nome de etapa que NUNCA entra no modo leve, seja qual for a lista: precisa de node_modules
+ * ou de build (typecheck, tsc, lint, test, test:*, build, peso, provar, vitest). Casa por
+ * trecho do nome, sem distinguir caixa: `test:peso`, `build:navegador`, `provar:navegador`,
+ * `typecheck (lint)`, `medir-peso`, `testUnit`. Errar para o lado de tirar demais é seguro: a
+ * etapa tirada aparece no aviso, e a VM de CI roda tudo.
+ */
+export const ETAPA_PESADA_RE = /typecheck|tsc|lint|test|build|peso|provar|vitest/i;
+
+export function ehEtapaPesada(nome) {
+  return ETAPA_PESADA_RE.test(String(nome ?? ''));
+}
+
+/**
+ * O modo CI remoto está ligado? Pura: recebe o valor de `git config --get neetru.ci` (null =
+ * sem a config) e se o portão completo foi pedido (`full`: NEETRU_PREPUSH_FULL=1 ou --full).
+ *
+ * Só o valor EXATO `remoto` liga; qualquer outro volta em `ignorado`, para o gate avisar (um
+ * «Remoto» ou «remote» digitado errado não pode parecer ligado nem sumir calado). `full` vence
+ * a config: a VM de CI roda o gate com FULL=1 e nunca pode sair verde pelo modo leve, mesmo que
+ * alguém ligue a config no clone dela.
+ */
+export function decidirModoCiRemoto({ configCi = null, full = false } = {}) {
+  const valor = String(configCi ?? '').trim();
+  const ligadoPelaConfig = valor === CONFIG_CI_REMOTO;
+  return {
+    ativo: ligadoPelaConfig && !full,
+    ignorado: valor !== '' && !ligadoPelaConfig ? valor : null,
+    vencidoPeloCompleto: ligadoPelaConfig && full,
+  };
+}
+
+/** A linha única que o gate imprime com o modo ligado. */
+export const LINHA_MODO_CI_REMOTO =
+  '[pre-push] modo CI remoto ligado (git config neetru.ci remoto): o portão completo roda na VM de CI; o merge exige o portão verde no SHA';
+
+/** A linha do modo ligado (ou null, desligado). Pura. */
+export function descreverModoCiRemoto(modo) {
+  return modo?.ativo ? LINHA_MODO_CI_REMOTO : null;
+}
+
+/** Avisos do modo (puros): valor ignorado da config, e config vencida pelo portão completo. */
+export function avisosDoModoCiRemoto(modo) {
+  const avisos = [];
+  if (modo?.ignorado) {
+    avisos.push(
+      `[pre-push] aviso: git config neetru.ci="${modo.ignorado}" ignorado — só vale o valor exato "${CONFIG_CI_REMOTO}". Rodando o gate de sempre, sem o modo leve.`,
+    );
+  }
+  if (modo?.vencidoPeloCompleto) {
+    avisos.push(
+      `[pre-push] aviso: git config neetru.ci=${CONFIG_CI_REMOTO} não vale com NEETRU_PREPUSH_FULL=1 (ou --full), que pede o portão completo. Rodando o gate completo.`,
+    );
+  }
+  return avisos;
+}
+
+/** `git config --get neetru.ci` (chave ausente: o git sai 1 e vira null). Nunca lança. */
+export function lerConfigCi(cwd, env = process.env) {
+  try {
+    const r = spawnSync('git', ['config', '--get', 'neetru.ci'], {
+      cwd,
+      encoding: 'utf8',
+      env: sanitizeGitEnv(env),
+    });
+    return r.status === 0 ? String(r.stdout ?? '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * O plano do modo leve (puro): só o que a lista `neetru.prePushLeve` do package.json declara
+ * (sem ela, `LISTA_LEVE_PADRAO`). Devolve:
+ *   steps      etapas que rodam como as de sempre, em `npm run <script>` e na ordem da lista;
+ *   licencas   a etapa interna de licenças (no processo, sem rede) está na lista;
+ *   docs       a etapa interna `docs` está na lista;
+ *   ignoradas  nomes que a lista trazia mas que são pesados (tirados, o gate avisa).
+ *
+ * Os nomes `licencas`, `lockfile` e `docs` são etapas internas do gate; qualquer outro é o nome
+ * de um script do package.json (que não existir BARRA, como no override `neetru.prePush`).
+ * A lista, quando existe, é a verdade inteira: o que ela não cita não roda.
+ */
+export function planLeve({ pkg, hasLockfile = false, flags = {} } = {}) {
+  const scripts = pkg?.scripts ?? {};
+  const declarada = pkg?.neetru?.prePushLeve;
+  const out = { steps: [], licencas: false, docs: false, ignoradas: [] };
+  if (declarada !== undefined && !Array.isArray(declarada)) {
+    out.steps.push({ name: 'prePushLeve', error: 'neetru.prePushLeve tem de ser uma lista de nomes de etapa (ou ficar fora do package.json)' });
+    return out;
+  }
+  const vistos = new Set();
+  for (const bruto of declarada ?? LISTA_LEVE_PADRAO) {
+    const nome = typeof bruto === 'string' ? bruto.trim() : '';
+    if (!nome) {
+      out.steps.push({ name: 'prePushLeve', error: `item inválido em neetru.prePushLeve: ${JSON.stringify(bruto)} (esperado o nome de uma etapa)` });
+      continue;
+    }
+    if (vistos.has(nome)) continue;
+    vistos.add(nome);
+    if (nome === 'licencas') out.licencas = true;
+    else if (nome === 'docs') out.docs = true;
+    else if (nome === 'lockfile') {
+      if (hasLockfile) out.steps.push(...lockfileNpm10Steps(flags));
+    } else if (ehEtapaPesada(nome)) out.ignoradas.push(nome);
+    else out.steps.push(scripts[nome] ? npmRun(nome, scripts) : { name: nome, error: `script "${nome}" não existe no package.json` });
+  }
+  return out;
+}
+
+/** O aviso de uma etapa pesada tirada da lista leve (pura). */
+export function avisoDeEtapaPesadaTirada(nome) {
+  return `[pre-push] aviso: etapa "${nome}" tirada de neetru.prePushLeve: precisa de node_modules ou de build e roda no portão da VM de CI.`;
 }
 
 // ─── aviso: fonte rastreada apagada do disco ─────────────────────────────────
@@ -1011,30 +1159,43 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   }
 
   const pkgPath = path.join(cwd, 'package.json');
-  const steps = planSteps({
-    pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
-    hasTsconfig: existsSync(path.join(cwd, 'tsconfig.json')),
-    hasLockfile: existsSync(path.join(cwd, 'package-lock.json')),
-    goDir: findGoDir({
-      pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null,
-      exists: (rel) => existsSync(path.join(cwd, rel)),
-      listDirs: (rel) => {
-        try {
-          return readdirSync(path.join(cwd, rel), { withFileTypes: true })
-            .filter((d) => d.isDirectory())
-            .map((d) => d.name);
-        } catch {
-          return [];
-        }
-      },
-    }),
-    flags,
-    hasTool: (cmd) => toolExists(cmd, env),
-  });
+  const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null;
+  const hasLockfile = existsSync(path.join(cwd, 'package-lock.json'));
+
+  // Modo CI remoto (`git config neetru.ci remoto`): o plano vem da lista leve e nada mais roda.
+  // Sem a config, ou com um valor que não seja exatamente `remoto`, o gate é o de sempre.
+  const modoCi = decidirModoCiRemoto({ configCi: lerConfigCi(cwd, env), full: flags.full });
+  for (const aviso of avisosDoModoCiRemoto(modoCi)) process.stdout.write(`${aviso}\n`);
+  const leve = modoCi.ativo ? planLeve({ pkg, hasLockfile, flags }) : null;
+
+  const steps = leve
+    ? leve.steps
+    : planSteps({
+        pkg,
+        hasTsconfig: existsSync(path.join(cwd, 'tsconfig.json')),
+        hasLockfile,
+        goDir: findGoDir({
+          pkg,
+          exists: (rel) => existsSync(path.join(cwd, rel)),
+          listDirs: (rel) => {
+            try {
+              return readdirSync(path.join(cwd, rel), { withFileTypes: true })
+                .filter((d) => d.isDirectory())
+                .map((d) => d.name);
+            } catch {
+              return [];
+            }
+          },
+        }),
+        flags,
+        hasTool: (cmd) => toolExists(cmd, env),
+      });
+  // No modo leve a licenças só roda se a lista a citar (sem lista, ela cita).
+  const rodaLicencas = !flags.noLicencas && (!leve || leve.licencas);
 
   // Etapa docs (repo de produto): entra depois do lint e antes dos testes.
   const configPath = path.join(cwd, 'neetru.config.json');
-  if (existsSync(configPath) && !flags.noDocs) {
+  if (existsSync(configPath) && !flags.noDocs && (!leve || leve.docs)) {
     let config = null;
     try {
       config = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
@@ -1047,10 +1208,15 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
     if (docs) steps.splice(posicaoDaEtapaDocs(steps), 0, docs);
   }
 
-  const nomes = [...(flags.noLicencas ? [] : ['licencas']), ...steps.map((s) => s.name)];
+  // UMA linha avisa que o modo leve está ligado; as etapas pesadas tiradas da lista saem em aviso próprio.
+  const linhaModoCi = descreverModoCiRemoto(modoCi);
+  if (linhaModoCi) process.stdout.write(`${linhaModoCi}\n`);
+  for (const nome of leve?.ignoradas ?? []) process.stdout.write(`${avisoDeEtapaPesadaTirada(nome)}\n`);
+
+  const nomes = [...(rodaLicencas ? ['licencas'] : []), ...steps.map((s) => s.name)];
   process.stdout.write(`[pre-push] gate Neetru — ${nomes.join(' -> ') || '(nenhuma etapa)'}\n`);
   if (flags.plan) {
-    if (!flags.noLicencas) {
+    if (rodaLicencas) {
       process.stdout.write('[pre-push]   licencas: no processo, sem rede — campo license dos package-lock.json rastreados\n');
     }
     // O resumo acima só tem nomes de script; num monorepo isso esconde o que
@@ -1062,16 +1228,25 @@ export async function main(argv = process.argv.slice(2), env = process.env, cwd 
   // o aviso, é justamente por aqui que o gate sai (a fonte some, o typecheck quebra).
   const lembreteFalha = lembreteApagados(apagados, { falhou: true });
   if (steps.length === 0) {
-    process.stderr.write(`[pre-push] nenhuma etapa detectada — configure "neetru.prePush" no package.json.${lembreteFalha}\n`);
-    return 1;
+    if (leve) {
+      // O modo leve com a lista sem etapa nenhuma (ou só com etapas pesadas): o repo pediu isto
+      // e o portão completo roda na VM. Só licenças, quando citada, ainda tem o que fazer.
+      if (!rodaLicencas) {
+        process.stdout.write('[pre-push] OK — modo CI remoto: nenhuma etapa leve em neetru.prePushLeve; o portão completo roda na VM de CI.\n');
+        return 0;
+      }
+    } else {
+      process.stderr.write(`[pre-push] nenhuma etapa detectada — configure "neetru.prePush" no package.json.${lembreteFalha}\n`);
+      return 1;
+    }
   }
 
   const done = [];
   if (flags.noLicencas) {
     process.stdout.write('\n[pre-push] aviso: etapa licencas PULADA (NEETRU_PREPUSH_NO_LICENCAS=1) — declare o motivo no PR.\n');
     done.push('licencas pulado');
-  } else {
-    const lic = etapaDeLicencas({ cwd, env, pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null });
+  } else if (rodaLicencas) {
+    const lic = etapaDeLicencas({ cwd, env, pkg });
     if (lic.texto) (lic.ok ? process.stdout : process.stderr).write(lic.texto);
     if (!lic.ok) {
       process.stderr.write(`\n[pre-push] ABORTADO em "licencas". Nada foi enviado.${lembreteFalha}\n`);

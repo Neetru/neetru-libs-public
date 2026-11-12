@@ -25,6 +25,7 @@ description: Use when an AI (Claude) is about to `git push` in ANY Neetru repo (
 | `NEETRU_PREPUSH_NO_LICENCAS=1` | Pula só a etapa **licencas** (declare no PR, como o skip) |
 | `NEETRU_LOCKFILE_NPM10_PULADO="<motivo>"` | Pula só a etapa **lockfile no npm 10**, com o motivo impresso no log. **O motivo é obrigatório**: `=1` sem dizer o porquê **barra** o push. Declare no PR |
 | `NEETRU_NPM_CACHE=<dir>` | Cache do npm da etapa do lockfile (`npx --cache <dir>`); sem ele vale o cache padrão do npm |
+| `git config neetru.ci remoto` | **Modo CI remoto** (PC principal sem tsc, testes nem build): o gate roda SÓ a lista `neetru.prePushLeve` do `package.json` (padrão: licenças e lockfile) e imprime uma linha. `NEETRU_PREPUSH_FULL=1` vence a config. Ver a seção Modo CI remoto |
 
 **Duas camadas:** o pre-push é o gate **barato** de todo push. Antes de **mergear na main** roda o gate **completo** do repo (no Core: `node scripts/pre-deploy-check.mjs` = tsc + vitest + `next build`; nos demais: `NEETRU_PREPUSH_FULL=1`). Cite a evidência (saída verde) no PR.
 
@@ -55,6 +56,14 @@ Padrão da casa (dono, 11/11/2026): **produção é Node 22 LTS e npm 10, e o lo
 - **Reprovou:** a etapa mostra o sintoma como o npm o disse e o conserto: `npx --yes npm@10 install --package-lock-only --ignore-scripts` (regenera o lock com o npm 10, sem tocar em `node_modules`). Commite o lock.
 - **Falha de ambiente** (sem rede, `npm@10` fora do cache do `npx`) não é lock fora de sincronia, e o gate não manda regenerar: rode uma vez com rede, ou aponte o cache da máquina (`NEETRU_NPM_CACHE=<dir>`), ou pule **com o motivo** (`NEETRU_LOCKFILE_NPM10_PULADO="sem rede e sem o npm@10 no cache do npx" git push …`) e declare no PR.
 - **Versão:** o repo declara `engines.node` `>=22` e traz `.nvmrc` e `.node-version` com `22` (LF travado no `.gitattributes`). Em **biblioteca publicada** o `engines` fica **sem teto** (`>=22`, nunca `<23`): quem consome em Node 24 não pode ganhar aviso.
+
+## Modo **CI remoto** (o PC principal só edita e envia; o portão completo roda na VM)
+Ordem do dono, 12/11/2026: build, `tsc` e testes **não rodam no PC principal**. Rodam na VM de CI, e o merge só sai com o portão completo **verde no SHA da ponta**. O push ao GitHub continua passando por este gate, em modo **leve**.
+- **Ligar (uma vez por clone):** `git config neetru.ci remoto`. É config **local** do clone (vale para todos os worktrees dele), **nunca `--global`**. Só o valor exato `remoto` liga; outro valor (`Remoto`, `remote`) é ignorado, com aviso. Desligar: `git config --unset neetru.ci`.
+- **O que roda no modo leve:** SÓ as etapas da lista explícita `"neetru": { "prePushLeve": [...] }` do `package.json`. Sem a lista, vale `["licencas", "lockfile"]`, as etapas internas que não precisam de `node_modules` nem de build. A lista aceita `licencas`, `lockfile`, `docs` (só repo de produto) e o nome de um script do `package.json` (script que não existe barra o push). A decisão é **pela lista, não pelo nome**: o `NEETRU_PREPUSH_FAST=1` só pulava `test` e `test:*`, e o `typecheck` (no SDK, o `lint`, que é um `tsc --noEmit`) ainda rodava no PC.
+- **O que nunca entra:** `typecheck`, `lint`, `test`, `test:*`, `build`, `peso` e `provar`, seja qual for a lista. Se estiver escrito lá, a etapa é tirada, com aviso.
+- **UMA linha** diz que o modo está ligado: «modo CI remoto ligado (git config neetru.ci remoto): o portão completo roda na VM de CI; o merge exige o portão verde no SHA».
+- **O portão completo** roda com `bash S:/Documents/Neetru/oracle-ci/ci.sh portao <repo> <sha>`, no commit que já está no GitHub. Ele roda o gate com `NEETRU_PREPUSH_FULL=1`, que **vence a config**: o modo leve nunca vale no portão. Merge só com o portão verde no SHA exato da ponta.
 
 ## ⚠️ Worktree novo em repo com husky: NENHUM hook roda até você gerar `.husky/_`
 O husky aponta `core.hooksPath` para `.husky/_` — pasta **gerada** (gitignored) pelo `npm install`. Um `git worktree add` (inclusive os worktrees de agentes em `.claude/worktrees/`) **não tem essa pasta** e ninguém roda `npm install` nele (node_modules costuma vir por junction) → git não acha hook nenhum → **pre-commit e pre-push somem em silêncio** e o push sobe sem gate (achado 2026-09-30, Core PR #518).
