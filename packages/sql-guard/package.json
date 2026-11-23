@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "pack:tgz": "npm run build && npm pack",
     "test": "vitest run",
     "prepublishOnly": "node ../../scripts/check-package-json.mjs && npm run build"
   },
