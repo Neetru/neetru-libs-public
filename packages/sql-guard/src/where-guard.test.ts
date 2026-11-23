@@ -22,9 +22,21 @@ describe('assertNonTrivialWhere — passa (WHERE genuino)', () => {
     ).not.toThrow();
   });
 
-  it('UPDATE com WHERE de comparacao de coluna com numero passa', () => {
+  // bug_10f7b39c (14): faixa contra constante nao prova restricao (`age >= 0` casa tudo).
+  it.each([
+    'UPDATE users SET x = 1 WHERE age > 18',
+    'UPDATE users SET x = 1 WHERE id >= 0',
+    'DELETE FROM users WHERE id > -1',
+    'DELETE FROM users WHERE id < 999999999',
+    'DELETE FROM users WHERE id <= $1',
+    'DELETE FROM users WHERE id BETWEEN 0 AND 1000000000000',
+  ])('so faixa no WHERE lanca: %s', (sql) => {
+    expect(() => assertNonTrivialWhere(sql)).toThrow();
+  });
+
+  it('faixa junto (AND) de um predicado de igualdade passa', () => {
     expect(() =>
-      assertNonTrivialWhere('UPDATE users SET x = 1 WHERE age > 18'),
+      assertNonTrivialWhere("UPDATE users SET x = 1 WHERE tenant_id = 't1' AND age > 18"),
     ).not.toThrow();
   });
 

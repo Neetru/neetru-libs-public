@@ -295,6 +295,13 @@ function isColumnVsValuePredicate(
   ]);
   if (NON_RESTRICTIVE_OPS.has(op)) return false;
 
+  // bug_10f7b39c (14): faixa contra constante não PROVA restrição — `col >= 0`, `col > -1`,
+  // `col < 999999999` e `BETWEEN 0 AND 1e12` casam TODAS as linhas, e um placeholder (`> $1`)
+  // pode receber o limite. Break-glass prova o alvo por igualdade: `=`, `IN (...)`, `IS NULL`
+  // ou `LIKE 'prefixo%'`.
+  const RANGE_OPS = new Set(['>', '>=', '<', '<=', 'BETWEEN']);
+  if (RANGE_OPS.has(op)) return false;
+
   // RC-F: col <> NULL / col != NULL — em SQL essa comparacao e SEMPRE UNKNOWN
   // (nunca TRUE). Fail-closed: nao e um predicado restritivo real. Redundante
   // com NON_RESTRICTIVE_OPS acima; mantido como defesa se aquela lista mudar.

@@ -34,6 +34,18 @@ describe('sql-guard — hardening MySQL (leitura/escrita de arquivo, DoS, RCE)',
     expect(v.safe).toBe(false);
   });
 
+  // bug_10f7b39c (13): `SELECT ... INTO <tabela>` cria tabela (Postgres) — o no e `select`.
+  it.each([
+    ['postgresql', 'SELECT * INTO novo FROM users'],
+    ['postgresql', 'SELECT id INTO TEMP copia FROM users WHERE id = 1'],
+  ] as const)('recusa SELECT ... INTO tabela (%s): %s', (dialeto, sql) => {
+    expect(classifyStatement(sql, dialeto).safe).toBe(false);
+  });
+
+  it('SELECT comum continua seguro', () => {
+    expect(classifyStatement('SELECT id, nome FROM users WHERE id = 1', 'postgresql').safe).toBe(true);
+  });
+
   it('recusa SELECT ... INTO DUMPFILE', () => {
     const v = classifyStatement("SELECT data FROM blobs INTO DUMPFILE '/tmp/x'", 'mysql');
     expect(v.safe).toBe(false);

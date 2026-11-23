@@ -144,3 +144,29 @@ export function findDataModifyingNode(ast: AstNode): string | null {
 
   return hit;
 }
+
+/**
+ * bug_10f7b39c (13): `SELECT ... INTO <tabela>` CRIA uma tabela (Postgres e SQL Server; no MySQL,
+ * `INTO @var` grava variável). O nó é `select`, então o classificador o aprovava como leitura. O
+ * node-sql-parser põe o destino em `into.expr` (ou `into` com conteúdo). Varre o AST INTEIRO,
+ * inclusive subqueries. `INTO OUTFILE/DUMPFILE` já é barrado antes, por palavra-chave.
+ *
+ * Devolve `true` se algum `select` tem destino de INTO.
+ */
+export function findSelectInto(ast: AstNode): boolean {
+  let hit = false;
+  walkAst(ast, (node) => {
+    if (hit || node['type'] !== 'select') return;
+    const into = node['into'];
+    if (into == null) return;
+    if (typeof into !== 'object') {
+      hit = true;
+      return;
+    }
+    const alvo = (into as Record<string, unknown>)['expr'];
+    const temAlvo =
+      alvo != null && !(Array.isArray(alvo) && alvo.length === 0) && !(typeof alvo === 'string' && alvo === '');
+    if (temAlvo) hit = true;
+  });
+  return hit;
+}

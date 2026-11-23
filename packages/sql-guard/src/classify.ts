@@ -11,7 +11,7 @@
 
 import pkg from 'node-sql-parser';
 import type { SqlVerdict } from './types.js';
-import { findDangerousFunctions, findDataModifyingNode } from './ast.js';
+import { findDangerousFunctions, findDataModifyingNode, findSelectInto } from './ast.js';
 import { detectRawLexerHazard } from './raw-guard.js';
 
 const { Parser } = pkg;
@@ -294,6 +294,15 @@ export function classifyStatement(
     return unsafe(
       type,
       `O statement contem uma operacao de escrita (${writeNode.toUpperCase()}) — possivelmente uma CTE data-modifying. Recusado.`,
+    );
+  }
+
+  // ---- SELECT ... INTO <tabela> (cria tabela) ---------------------------
+  // bug_10f7b39c (13): o no e `select`, mas `INTO novo` CRIA uma tabela (ou grava variavel).
+  if (findSelectInto(node)) {
+    return unsafe(
+      type,
+      'SELECT ... INTO cria uma tabela (ou grava em variavel) — recusado, nao e uma consulta de leitura.',
     );
   }
 
