@@ -102,6 +102,17 @@ A fonte é o repo privado `Neetru/neetru-libs`, em `claude-skills/`. **Esta loja
 espelho** — editar direto aqui é perder o trabalho no próximo espelhamento. Veja
 a seção final do `INSTALL.md`.
 
+### De onde vem cada cópia das skills
+
+| Onde | O que é | Como chega lá |
+|---|---|---|
+| `Neetru/neetru-libs`, em `claude-skills/plugins/neetru/skills/` | **A fonte.** Edita-se aqui, numa branch, com PR | — |
+| `Neetru/neetru-libs-public` (esta loja) | Espelho público, o que as máquinas baixam | à mão: `npm run sync:mirror -- <clone-da-loja>` no `neetru-libs`, depois PR na loja. O digest fica em `.store-sync.json`, e o pre-push do `neetru-libs` recusa o push se ele não bater |
+| `~/.claude/skills/` de cada dev | Cópia instalada | `neetru archive skills install` clona (ou atualiza) a loja em `~/.neetru/archive-cache/` e liga cada skill: symlink no Linux e no macOS, cópia no Windows |
+| `.claude/skills/neetru-*` do `neetru-core` | Cópia versionada no Core | à mão. **Nada a mantém em dia**: faça um diff contra a fonte antes de confiar nela |
+
+Skills que existem só numa máquina ou num repo (`neetru-ui-guidelines`, `neetru-core-flow`, `neetru-diretrizes-design`) não passam por este fluxo e não estão na loja.
+
 ## Licença
 
 UNLICENSED — uso interno Neetru. Repositório público para distribuição das
